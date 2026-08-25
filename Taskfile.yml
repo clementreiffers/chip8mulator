@@ -1,0 +1,21 @@
+version: '3'
+
+vars:
+  ROM_DIR: .cache/roms
+  CORAX89_ROM: '{{.ROM_DIR}}/corax89-test_opcode.ch8'
+  CORAX89_URL: https://raw.githubusercontent.com/corax89/chip8-test-rom/master/test_opcode.ch8
+  CORAX89_SHA256: 67759cf9f5b27db66f0769ea8fd0b30ba220f46d6f19f8ba4fd4108d986ce0ab
+
+tasks:
+  download-conformance-rom:
+    desc: Download and verify corax89's public CHIP-8 opcode conformance ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.CORAX89_ROM}} {{.CORAX89_URL}}
+      - 'printf "%s  %s\\n" "{{.CORAX89_SHA256}}" "{{.CORAX89_ROM}}" | shasum -a 256 --check'
+
+  test-conformance:
+    desc: Verify complete ROM loading and execute the corax89 opcode ROM
+    deps: [download-conformance-rom]
+    cmds:
+      - CHIP8_CONFORMANCE_ROM={{.ROOT_DIR}}/{{.CORAX89_ROM}} cargo test --manifest-path src/chip8-engine/Cargo.toml --test corax89_opcode -- --nocapture

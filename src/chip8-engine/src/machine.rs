@@ -208,6 +208,11 @@ impl Chip8 {
     pub fn framebuffer(&self) -> &[u8; DISPLAY_PIXELS] {
         self.display.pixels()
     }
+    /// Complete RAM snapshot for diagnostics and host-side inspection.
+    #[must_use]
+    pub fn memory(&self) -> &[u8] {
+        &self.memory
+    }
     #[must_use]
     pub fn sound_active(&self) -> bool {
         self.sound_timer != 0

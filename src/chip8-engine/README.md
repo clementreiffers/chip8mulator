@@ -44,3 +44,10 @@ if (chip8.sound_active()) hostAudioOn();
 
 The JavaScript host maps keyboard input through `set_key(key, pressed)`, where
 `key` is in the CHIP-8 range `0x0..=0xF`.
+
+## Conformance ROM
+
+Run `task test-conformance` from the repository root to dynamically download
+corax89's public `test_opcode.ch8` ROM, verify its SHA-256, copy every byte
+into CHIP-8 program memory, and execute 20,000 cycles. The downloaded artifact
+lives under `.cache/` and is not committed.
