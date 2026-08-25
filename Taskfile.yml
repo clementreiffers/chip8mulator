@@ -11,6 +11,9 @@ vars:
   FLAGS_ROM: '{{.ROM_DIR}}/flags-test.ch8'
   FLAGS_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/4-flags.ch8
   FLAGS_SHA256: f00ddadd37bc878473de0c8f16faecf9985dea39036a3a796d551bc9fec47cfa
+  SPACEINVADERS_ROM: '{{.ROM_DIR}}/space-invaders.ch8'
+  SPACEINVADERS_URL: https://raw.githubusercontent.com/kripod/chip8-roms/master/games/Space%20Invaders%20%5BDavid%20Winter%5D.ch8
+  SPACEINVADERS_SHA256: 00bb7001de52b562d98357d33375406c6d0308466d7d95c2580537d2451a75cd
 
 tasks:
   download-conformance-rom:
@@ -51,3 +54,16 @@ tasks:
     deps: [download-flags-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.FLAGS_ROM}}
+
+  download-spaceinvaders-rom:
+    desc: Download and verify Space Invaders ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.SPACEINVADERS_ROM}} {{.SPACEINVADERS_URL}}
+      - 'printf "%s  %s\\n" "{{.SPACEINVADERS_SHA256}}" "{{.SPACEINVADERS_ROM}}" | shasum -a 256 --check'
+
+  play-spaceinvaders:
+    desc: Launch Space Invaders in native GUI
+    deps: [download-spaceinvaders-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.SPACEINVADERS_ROM}}
