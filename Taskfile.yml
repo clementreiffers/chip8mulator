@@ -8,6 +8,9 @@ vars:
   HELLOWORLD_ROM: '{{.ROM_DIR}}/hello-world.ch8'
   HELLOWORLD_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/1-chip8-logo.ch8
   HELLOWORLD_SHA256: 15f7fb887ea4cb8e40615bb20b0cfd993ef55ca84c535c8c8f3fafa8bf129724
+  FLAGS_ROM: '{{.ROM_DIR}}/flags-test.ch8'
+  FLAGS_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/4-flags.ch8
+  FLAGS_SHA256: f00ddadd37bc878473de0c8f16faecf9985dea39036a3a796d551bc9fec47cfa
 
 tasks:
   download-conformance-rom:
@@ -30,8 +33,21 @@ tasks:
     cmds:
       - CHIP8_CONFORMANCE_ROM={{.ROOT_DIR}}/{{.CORAX89_ROM}} cargo test --manifest-path src/chip8-engine/Cargo.toml --test corax89_opcode -- --nocapture
 
+  download-flags-rom:
+    desc: Download and verify flags test ROM (interactive test suite)
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.FLAGS_ROM}} {{.FLAGS_URL}}
+      - 'printf "%s  %s\\n" "{{.FLAGS_SHA256}}" "{{.FLAGS_ROM}}" | shasum -a 256 --check'
+
   test-helloworld-gui:
     desc: Launch hello-world ROM in native GUI
     deps: [download-helloworld-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.HELLOWORLD_ROM}}
+
+  test-flags-gui:
+    desc: Launch interactive flags test ROM in native GUI
+    deps: [download-flags-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.FLAGS_ROM}}
