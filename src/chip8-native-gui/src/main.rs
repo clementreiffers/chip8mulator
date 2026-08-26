@@ -18,8 +18,27 @@ use winit::{
     window::WindowBuilder,
 };
 
+const DEFAULT_PALETTE: [egui::Color32; 16] = [
+    egui::Color32::from_rgb(2, 4, 12),
+    egui::Color32::from_rgb(51, 255, 186),
+    egui::Color32::from_rgb(255, 64, 190),
+    egui::Color32::WHITE,
+    egui::Color32::from_rgb(49, 128, 255),
+    egui::Color32::from_rgb(255, 190, 66),
+    egui::Color32::from_rgb(183, 102, 255),
+    egui::Color32::from_rgb(90, 235, 255),
+    egui::Color32::from_rgb(255, 94, 94),
+    egui::Color32::from_rgb(110, 255, 112),
+    egui::Color32::from_rgb(255, 142, 58),
+    egui::Color32::from_rgb(255, 115, 225),
+    egui::Color32::from_rgb(108, 170, 255),
+    egui::Color32::from_rgb(255, 230, 92),
+    egui::Color32::from_rgb(154, 255, 225),
+    egui::Color32::from_rgb(230, 236, 255),
+];
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let (rom_path, debug_mode, profile) = parse_args(std::env::args_os().skip(1))?;
+    let (rom_path, debug_mode, profile, palette) = parse_args(std::env::args_os().skip(1))?;
     let rom = std::fs::read(&rom_path)?;
     let title = format!("CHIP-8 — {}", rom_path.display());
     let event_loop = EventLoop::new()?;
@@ -107,6 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 &mut frame_texture,
                                 upload_frame,
                                 debug_mode,
+                                &palette,
                             );
                         });
                         egui_state.handle_platform_output(
@@ -137,10 +157,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_args(
     mut args: impl Iterator<Item = OsString>,
-) -> Result<(PathBuf, bool, CompatibilityProfile), String> {
+) -> Result<(PathBuf, bool, CompatibilityProfile, [egui::Color32; 16]), String> {
     let mut rom_path = None;
     let mut debug_mode = false;
     let mut profile = CompatibilityProfile::OriginalChip8;
+    let mut palette = DEFAULT_PALETTE;
     while let Some(arg) = args.next() {
         if arg == "--debug-mode" {
             debug_mode = true;
@@ -165,6 +186,14 @@ fn parse_args(
                     ));
                 }
             };
+        } else if arg == "--palette" {
+            let value = args.next().ok_or_else(|| {
+                format!(
+                    "--palette requires four #RRGGBB colors separated by commas\n\n{}",
+                    usage()
+                )
+            })?;
+            palette = parse_palette(&value)?;
         } else if arg.to_string_lossy().starts_with('-') {
             return Err(format!(
                 "unknown option: {}\n\n{}",
@@ -176,12 +205,57 @@ fn parse_args(
         }
     }
     rom_path
-        .map(|path| (path, debug_mode, profile))
+        .map(|path| (path, debug_mode, profile, palette))
         .ok_or_else(|| usage().to_owned())
 }
 
+fn parse_palette(value: &OsString) -> Result<[egui::Color32; 16], String> {
+    let value = value.to_string_lossy();
+    let colors: Vec<_> = value
+        .split(',')
+        .map(parse_color)
+        .collect::<Result<_, _>>()?;
+    let colors: [egui::Color32; 4] = colors.try_into().map_err(|_| {
+        format!(
+            "--palette requires exactly four #RRGGBB colors, got {value}\n\n{}",
+            usage()
+        )
+    })?;
+    let mut palette = DEFAULT_PALETTE;
+    palette[..4].copy_from_slice(&colors);
+    Ok(palette)
+}
+
+fn parse_color(value: &str) -> Result<egui::Color32, String> {
+    let Some(hex) = value.strip_prefix('#') else {
+        return Err(format!(
+            "invalid palette color {value}; expected #RRGGBB\n\n{}",
+            usage()
+        ));
+    };
+    if hex.len() != 6 {
+        return Err(format!(
+            "invalid palette color {value}; expected #RRGGBB\n\n{}",
+            usage()
+        ));
+    }
+    let component = |range| {
+        u8::from_str_radix(&hex[range], 16).map_err(|_| {
+            format!(
+                "invalid palette color {value}; expected #RRGGBB\n\n{}",
+                usage()
+            )
+        })
+    };
+    Ok(egui::Color32::from_rgb(
+        component(0..2)?,
+        component(2..4)?,
+        component(4..6)?,
+    ))
+}
+
 fn usage() -> &'static str {
-    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
+    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] [--palette #RRGGBB,#RRGGBB,#RRGGBB,#RRGGBB] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
 }
 
 fn show_interface(
@@ -190,8 +264,9 @@ fn show_interface(
     frame_texture: &mut Option<egui::TextureHandle>,
     upload_frame: bool,
     debug_mode: bool,
+    palette: &[egui::Color32; 16],
 ) {
-    let image = frame_image(app.framebuffer(), app.display_dimensions());
+    let image = frame_image(app.framebuffer(), app.display_dimensions(), palette);
     if let Some(texture) = frame_texture
         && texture.size() == image.size
     {
@@ -221,28 +296,17 @@ fn show_interface(
     }
 }
 
-fn frame_image(framebuffer: &[u8], dimensions: (usize, usize)) -> egui::ColorImage {
-    const PALETTE: [egui::Color32; 16] = [
-        egui::Color32::from_rgb(2, 4, 12),
-        egui::Color32::from_rgb(51, 255, 186),
-        egui::Color32::from_rgb(255, 64, 190),
-        egui::Color32::WHITE,
-        egui::Color32::from_rgb(49, 128, 255),
-        egui::Color32::from_rgb(255, 190, 66),
-        egui::Color32::from_rgb(183, 102, 255),
-        egui::Color32::from_rgb(90, 235, 255),
-        egui::Color32::from_rgb(255, 94, 94),
-        egui::Color32::from_rgb(110, 255, 112),
-        egui::Color32::from_rgb(255, 142, 58),
-        egui::Color32::from_rgb(255, 115, 225),
-        egui::Color32::from_rgb(108, 170, 255),
-        egui::Color32::from_rgb(255, 230, 92),
-        egui::Color32::from_rgb(154, 255, 225),
-        egui::Color32::from_rgb(230, 236, 255),
-    ];
-    let mut image = egui::ColorImage::new([dimensions.0, dimensions.1], PALETTE[0]);
+fn frame_image(
+    framebuffer: &[u8],
+    dimensions: (usize, usize),
+    palette: &[egui::Color32; 16],
+) -> egui::ColorImage {
+    let mut image = egui::ColorImage::new([dimensions.0, dimensions.1], palette[0]);
     for (output, input) in image.pixels.iter_mut().zip(framebuffer) {
-        *output = PALETTE[usize::from(*input)];
+        *output = palette
+            .get(usize::from(*input))
+            .copied()
+            .unwrap_or(palette[0]);
     }
     image
 }
@@ -444,7 +508,8 @@ mod tests {
             (
                 PathBuf::from("rom.ch8"),
                 true,
-                CompatibilityProfile::OriginalChip8
+                CompatibilityProfile::OriginalChip8,
+                DEFAULT_PALETTE
             )
         );
         let args = [OsString::from("rom.ch8"), OsString::from("--debug-mode")];
@@ -453,7 +518,8 @@ mod tests {
             (
                 PathBuf::from("rom.ch8"),
                 true,
-                CompatibilityProfile::OriginalChip8
+                CompatibilityProfile::OriginalChip8,
+                DEFAULT_PALETTE
             )
         );
     }
@@ -470,7 +536,8 @@ mod tests {
             (
                 PathBuf::from("rom.ch8"),
                 false,
-                CompatibilityProfile::SuperChip
+                CompatibilityProfile::SuperChip,
+                DEFAULT_PALETTE
             )
         );
     }
@@ -489,15 +556,59 @@ mod tests {
     }
 
     #[test]
+    fn parses_four_custom_palette_colours_and_preserves_extended_colours() {
+        let args = [
+            OsString::from("--palette"),
+            OsString::from("#87CEEB,#554422,#456543,#EEEEFF"),
+            OsString::from("rom.ch8"),
+        ];
+        let palette = parse_args(args.into_iter()).expect("valid palette").3;
+        assert_eq!(palette[0], egui::Color32::from_rgb(135, 206, 235));
+        assert_eq!(palette[1], egui::Color32::from_rgb(85, 68, 34));
+        assert_eq!(palette[2], egui::Color32::from_rgb(69, 101, 67));
+        assert_eq!(palette[3], egui::Color32::from_rgb(238, 238, 255));
+        assert_eq!(palette[4], DEFAULT_PALETTE[4]);
+    }
+
+    #[test]
+    fn rejects_invalid_palette_arguments() {
+        let missing_colour = [
+            OsString::from("--palette"),
+            OsString::from("#000000,#111111,#222222"),
+            OsString::from("rom.ch8"),
+        ];
+        assert!(parse_args(missing_colour.into_iter()).is_err());
+
+        let invalid_hex = [
+            OsString::from("--palette"),
+            OsString::from("#000000,#111111,#22222G,#333333"),
+            OsString::from("rom.ch8"),
+        ];
+        assert!(parse_args(invalid_hex.into_iter()).is_err());
+    }
+
+    #[test]
     fn framebuffer_pixels_use_visible_debug_colors() {
         let mut framebuffer = vec![0; 64 * 32];
         framebuffer[1] = 1;
         framebuffer[2] = 2;
         framebuffer[3] = 3;
-        let image = frame_image(&framebuffer, (64, 32));
+        let image = frame_image(&framebuffer, (64, 32), &DEFAULT_PALETTE);
         assert_eq!(image.pixels[0], egui::Color32::from_rgb(2, 4, 12));
         assert_eq!(image.pixels[1], egui::Color32::from_rgb(51, 255, 186));
         assert_eq!(image.pixels[2], egui::Color32::from_rgb(255, 64, 190));
         assert_eq!(image.pixels[3], egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn framebuffer_uses_custom_standard_palette_and_keeps_extended_default_colours() {
+        let palette = parse_palette(&OsString::from("#010203,#040506,#070809,#0A0B0C"))
+            .expect("valid palette");
+        let image = frame_image(&[0, 1, 2, 3, 4], (5, 1), &palette);
+        assert_eq!(image.pixels[0], egui::Color32::from_rgb(1, 2, 3));
+        assert_eq!(image.pixels[1], egui::Color32::from_rgb(4, 5, 6));
+        assert_eq!(image.pixels[2], egui::Color32::from_rgb(7, 8, 9));
+        assert_eq!(image.pixels[3], egui::Color32::from_rgb(10, 11, 12));
+        assert_eq!(image.pixels[4], DEFAULT_PALETTE[4]);
     }
 }

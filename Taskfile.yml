@@ -32,6 +32,9 @@ vars:
   ALIEN_INV8SION_ROM: '{{.ROM_DIR}}/alien-inv8sion.ch8'
   ALIEN_INV8SION_SOURCE_URL: https://raw.githubusercontent.com/Timendus/alien-inv8sion/main/bin/alien-inv8sion-octo.8o
   ALIEN_INV8SION_SOURCE_SHA256: c08f0322764a99965d9cd2764aeb4ccbbb6232607c8fa38375e973fb60063459
+  T8NKS_ROM: '{{.ROM_DIR}}/t8nks.ch8'
+  T8NKS_URL: https://johnearnest.github.io/chip8Archive/roms/t8nks.ch8
+  T8NKS_SHA256: 778e9e4794bc9126b4d15dad4d9875c2b2616413bd40d3f4612a136e40a82a1a
 
 tasks:
   download-conformance-rom:
@@ -253,3 +256,22 @@ tasks:
     deps: [compile-alien-inv8sion-docker]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.ALIEN_INV8SION_ROM}}
+
+  download-t8nks-rom:
+    desc: Download and verify the official T8NKS XO-CHIP artillery game ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.T8NKS_ROM}} {{.T8NKS_URL}}
+      - 'printf "%s  %s\\n" "{{.T8NKS_SHA256}}" "{{.T8NKS_ROM}}" | shasum -a 256 --check'
+
+  play-t8nks:
+    desc: Launch the T8NKS XO-CHIP artillery game
+    deps: [download-t8nks-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip --palette '#87CEEB,#554422,#456543,#EEEEFF' {{.ROOT_DIR}}/{{.T8NKS_ROM}}
+
+  debug-t8nks:
+    desc: Launch T8NKS in XO-CHIP debug mode
+    deps: [download-t8nks-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip --palette '#87CEEB,#554422,#456543,#EEEEFF' {{.ROOT_DIR}}/{{.T8NKS_ROM}}
