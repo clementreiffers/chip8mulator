@@ -280,3 +280,15 @@ tasks:
     deps: [download-t8nks-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip --palette '#87CEEB,#554422,#456543,#EEEEFF' {{.ROOT_DIR}}/{{.T8NKS_ROM}}
+
+  web-dev:
+    desc: Build the WebAssembly engine and serve the React site locally
+    dir: src/chip8-web
+    cmds:
+      - npm run dev
+
+  build-web:
+    desc: Build the static React/WebAssembly site in src/chip8-web/dist
+    dir: src/chip8-web
+    cmds:
+      - npm run build
