@@ -13,7 +13,6 @@ interface web React/WebAssembly.
 | --- | --- |
 | Interface native — Linux x86_64 | [`.tar.gz`](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-native-gui-linux-x86_64.tar.gz) |
 | Interface native — Windows x86_64 | [`.zip`](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-native-gui-windows-x86_64.zip) |
-| Interface native — macOS Intel | [`.tar.gz`](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-native-gui-macos-intel.tar.gz) |
 | Interface native — macOS Apple Silicon | [`.tar.gz`](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-native-gui-macos-arm64.tar.gz) |
 | Moteur Rust réutilisable | [archive Cargo `.crate`](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-engine.crate) |
 | Bindings WebAssembly | [archive WASM](https://github.com/clementreiffers/chip8mulator/releases/latest/download/chip8-engine-wasm.zip) |
