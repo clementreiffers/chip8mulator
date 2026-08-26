@@ -3,7 +3,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+use winit::keyboard::KeyCode;
+
 pub const TRACE_CAPACITY: usize = 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyPress {
+    pub physical_key: KeyCode,
+    pub chip8_key: u8,
+}
 
 #[derive(Debug, Clone)]
 pub struct TraceEntry {
@@ -32,6 +40,7 @@ impl TraceEntry {
 pub struct DebugState {
     trace: VecDeque<TraceEntry>,
     breakpoints: Vec<u16>,
+    last_key_press: Option<KeyPress>,
 }
 
 impl DebugState {
@@ -48,6 +57,17 @@ impl DebugState {
 
     pub fn trace(&self) -> &VecDeque<TraceEntry> {
         &self.trace
+    }
+
+    pub fn record_key_press(&mut self, physical_key: KeyCode, chip8_key: u8) {
+        self.last_key_press = Some(KeyPress {
+            physical_key,
+            chip8_key,
+        });
+    }
+
+    pub const fn last_key_press(&self) -> Option<KeyPress> {
+        self.last_key_press
     }
 
     pub fn is_breakpoint(&self, pc: u16) -> bool {
@@ -184,5 +204,19 @@ mod tests {
         }
         assert_eq!(state.trace().len(), TRACE_CAPACITY);
         assert_eq!(state.trace().front().expect("trace entry").pc, 1);
+    }
+
+    #[test]
+    fn records_the_last_physical_to_chip8_key_mapping() {
+        let mut state = DebugState::default();
+        state.record_key_press(KeyCode::KeyX, 0x0);
+
+        assert_eq!(
+            state.last_key_press(),
+            Some(KeyPress {
+                physical_key: KeyCode::KeyX,
+                chip8_key: 0x0,
+            })
+        );
     }
 }

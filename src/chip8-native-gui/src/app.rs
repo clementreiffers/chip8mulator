@@ -68,6 +68,19 @@ impl App {
         self.chip8.set_key(key, pressed)
     }
 
+    pub fn set_mapped_key(
+        &mut self,
+        physical_key: KeyCode,
+        chip8_key: u8,
+        pressed: bool,
+    ) -> Result<(), Chip8Error> {
+        self.set_key(chip8_key, pressed)?;
+        if pressed && let Some(debug) = &mut self.debug {
+            debug.record_key_press(physical_key, chip8_key);
+        }
+        Ok(())
+    }
+
     /// Returns true when a host-level command was consumed.
     pub fn handle_command(&mut self, key: KeyCode) -> bool {
         match key {
@@ -374,6 +387,24 @@ mod tests {
         app.enable_debug();
 
         assert_eq!(app.debug().expect("debug enabled").trace().len(), 1);
+    }
+
+    #[test]
+    fn debug_records_key_presses_but_not_releases() {
+        let mut app =
+            App::new(vec![], true, CompatibilityProfile::OriginalChip8).expect("valid ROM");
+
+        app.set_mapped_key(KeyCode::KeyX, 0x0, true)
+            .expect("valid key press");
+        app.set_mapped_key(KeyCode::KeyV, 0xF, false)
+            .expect("valid key release");
+
+        let key_press = app.debug().expect("debug enabled").last_key_press();
+        assert_eq!(
+            key_press.expect("recorded key press").physical_key,
+            KeyCode::KeyX
+        );
+        assert_eq!(key_press.expect("recorded key press").chip8_key, 0x0);
     }
 
     #[test]

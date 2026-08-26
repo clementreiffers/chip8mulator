@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 return;
                             }
                             if let Some(key) = key_to_chip8(code)
-                                && let Err(error) = app.set_key(key, pressed)
+                                && let Err(error) = app.set_mapped_key(code, key, pressed)
                             {
                                 eprintln!("input error: {error}");
                                 event_loop.exit();
@@ -658,6 +658,16 @@ fn show_debug_interface(
                 average.map(std::time::Duration::from_secs_f64),
             ));
             ui.label(format_duration("Réponse", response));
+            let key_press = app.debug().expect("debug enabled").last_key_press();
+            ui.label(key_press.map_or_else(
+                || "Dernière touche : —".into(),
+                |key_press| {
+                    format!(
+                        "Dernière touche : {:?} -> CHIP-8 {:#X}",
+                        key_press.physical_key, key_press.chip8_key
+                    )
+                },
+            ));
             ui.separator();
             ui.label("Durée d'analyse (historique)");
             draw_chart(ui, &entries);
