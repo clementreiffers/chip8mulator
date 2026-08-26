@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path src/chip8-engine/Cargo.toml --check
+      - run: cargo test --manifest-path src/chip8-engine/Cargo.toml --all-features
+      - run: cargo clippy --manifest-path src/chip8-engine/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: cargo build --manifest-path src/chip8-engine/Cargo.toml --target wasm32-unknown-unknown --features wasm --release
+
+  native-gui:
+    name: native-gui (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: macos-intel
+            os: macos-13
+            target: x86_64-apple-darwin
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux audio build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libudev-dev pkg-config
+      - run: cargo build --manifest-path src/chip8-native-gui/Cargo.toml --target ${{ matrix.target }} --release
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/chip8-web/package-lock.json
+      - run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - run: npm ci
+        working-directory: src/chip8-web
+      - run: npm test
+        working-directory: src/chip8-web
+      - run: npm run build
+        working-directory: src/chip8-web
+      - name: Ensure the production site does not embed WASM
+        run: test ! -e src/chip8-web/dist/assets/chip8_engine_bg.wasm

@@ -1,25 +1,20 @@
-import init, { WasmChip8, WasmCompatibilityProfile } from "../wasm-pkg/chip8_engine.js";
 import type { Profile } from "./catalogue";
-
-const PROFILE: Record<Profile, WasmCompatibilityProfile> = {
-  chip8: WasmCompatibilityProfile.OriginalChip8, chip48: WasmCompatibilityProfile.Chip48, modern: WasmCompatibilityProfile.Modern,
-  schip10: WasmCompatibilityProfile.SuperChip10, schip11: WasmCompatibilityProfile.SuperChip11, schipc: WasmCompatibilityProfile.SuperChipCompatibility,
-  "schip-modern": WasmCompatibilityProfile.SuperChipModern, superchip: WasmCompatibilityProfile.SuperChip, xochip: WasmCompatibilityProfile.XoChip,
-};
+import { loadWasm, type WasmBindings, type WasmChip8 } from "./wasm-loader";
 export const DEFAULT_CPU_HZ = 700, MIN_CPU_HZ = 60, MAX_CPU_HZ = 2000;
 export type TraceEntry = { pc: number; opcode: number; mnemonic: string; analysis: number; response?: number };
 export type RuntimeState = { frame: Uint8Array; width: number; height: number; halted: boolean; trace: TraceEntry[]; lastKey?: string };
 
 export class Chip8Runtime {
+  private constructor(private readonly wasm: WasmBindings) {}
   private chip!: WasmChip8; private rom = new Uint8Array(); private profile: Profile = "chip8";
   private cpuHz = DEFAULT_CPU_HZ; private remainder = 0; private paused = false; private halted = false;
   private debug = false; private breakpoints = new Set<number>(); private skipBreakpoint?: number; private trace: TraceEntry[] = [];
   private lastFrame = 0; private animation?: number; private readonly listeners = new Set<(state: RuntimeState) => void>();
   private audio?: AudioContext; private source?: AudioBufferSourceNode; private gain?: GainNode; private audioSignature = "";
 
-  static async create() { await init(); return new Chip8Runtime(); }
+  static async create() { const loaded = await loadWasm(); await loaded.bindings.default(loaded.binaryUrl); return new Chip8Runtime(loaded.bindings); }
   subscribe(listener: (state: RuntimeState) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  async load(rom: Uint8Array, profile: Profile) { this.rom = rom.slice(); this.profile = profile; this.chip = WasmChip8.with_profile(PROFILE[profile], 0xc8082024); this.chip.load_rom(this.rom); this.resetHost(); this.publish(); }
+  async load(rom: Uint8Array, profile: Profile) { this.rom = rom.slice(); this.profile = profile; this.chip = this.wasm.WasmChip8.with_profile(this.wasm.WasmCompatibilityProfile[profileName(profile)], 0xc8082024); this.chip.load_rom(this.rom); this.resetHost(); this.publish(); }
   setProfile(profile: Profile) { return this.load(this.rom, profile); }
   setCpuHz(value: number) { this.cpuHz = Math.min(MAX_CPU_HZ, Math.max(MIN_CPU_HZ, value)); }
   getCpuHz() { return this.cpuHz; } getProfile() { return this.profile; } isPaused() { return this.paused; } isDebug() { return this.debug; }
@@ -66,3 +61,4 @@ export function disassemble(opcode: number) {
   }
 }
 function invalid(opcode: number) { return `INVALID 0x${opcode.toString(16).padStart(4, "0").toUpperCase()}`; }
+function profileName(profile: Profile) { return ({ chip8: "OriginalChip8", chip48: "Chip48", modern: "Modern", schip10: "SuperChip10", schip11: "SuperChip11", schipc: "SuperChipCompatibility", "schip-modern": "SuperChipModern", superchip: "SuperChip", xochip: "XoChip" } as const)[profile]; }

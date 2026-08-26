@@ -6,7 +6,7 @@
   "scripts": {
     "build:wasm": "sh ./scripts/build-wasm.sh",
     "dev": "npm run build:wasm && vite",
-    "build": "npm run build:wasm && tsc -b && vite build",
+    "build": "CHIP8_WASM_SOURCE=release npm run build:wasm && tsc -b && vite build",
     "test": "vitest run",
     "check": "npm run build:wasm && tsc -b"
   },

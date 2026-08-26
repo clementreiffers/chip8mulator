@@ -15,6 +15,15 @@ npm run dev
 ```
 
 `npm run build` generates the browser-oriented WASM package, type-checks the
-application, and emits the static site in `dist/`. The ROM catalogue is loaded
-dynamically from the two binary ROM repositories used by the native host; Octo
-source files are intentionally excluded.
+application, and emits the static site in `dist/`. Its production bundle does
+not contain a WASM binary: it imports the latest release assets from GitHub.
+`npm run dev` instead serves the bindings generated locally under `/wasm/`.
+The ROM catalogue is loaded dynamically from the two binary ROM repositories
+used by the native host; Octo source files are intentionally excluded.
+
+## Releases
+
+A `vX.Y.Z` Git tag publishes the generated WASM bindings, a versioned WASM
+archive, the reusable `chip8-engine-X.Y.Z.crate`, native GUI archives, and the
+static web bundle. The GitHub Pages deployment consumes the stable
+`chip8_engine.js` and `chip8_engine_bg.wasm` assets from the latest release.
