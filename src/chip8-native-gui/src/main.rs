@@ -176,6 +176,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         if debug_activated {
                             let _ = window.request_inner_size(LogicalSize::new(1_280.0, 800.0));
                         }
+                        if library_view.open {
+                            window.set_title("CHIP-8 — Bibliothèque");
+                        }
                         egui_state.handle_platform_output(
                             window.as_ref(),
                             output.platform_output.clone(),
@@ -342,21 +345,27 @@ fn show_interface(
             app,
             frame_texture.as_ref().expect("frame texture initialized"),
             settings_open,
+            &mut library_view.open,
         );
         false
     } else {
         let mut debug_activated = false;
         egui::TopBottomPanel::top("window_options").show(ctx, |ui| {
-            ui.menu_button("Options", |ui| {
-                if ui.button("Paramètres…").clicked() {
-                    *settings_open = true;
-                    ui.close_menu();
+            ui.horizontal(|ui| {
+                if ui.button("Bibliothèque").clicked() {
+                    library_view.open = true;
                 }
-                if ui.button("Activer le mode debug").clicked() {
-                    app.enable_debug();
-                    debug_activated = true;
-                    ui.close_menu();
-                }
+                ui.menu_button("Options", |ui| {
+                    if ui.button("Paramètres…").clicked() {
+                        *settings_open = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("Activer le mode debug").clicked() {
+                        app.enable_debug();
+                        debug_activated = true;
+                        ui.close_menu();
+                    }
+                });
             });
         });
         egui::CentralPanel::default()
@@ -510,6 +519,7 @@ fn show_debug_interface(
     app: &mut App,
     texture: &egui::TextureHandle,
     settings_open: &mut bool,
+    library_open: &mut bool,
 ) {
     let mut toggle_pause = false;
     let mut step = false;
@@ -517,6 +527,9 @@ fn show_debug_interface(
     let mut profile = None;
     egui::TopBottomPanel::top("debug_controls").show(ctx, |ui| {
         ui.horizontal(|ui| {
+            if ui.button("Bibliothèque").clicked() {
+                *library_open = true;
+            }
             if ui
                 .button(if app.is_paused() {
                     "Reprendre"
