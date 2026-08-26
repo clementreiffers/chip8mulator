@@ -20,6 +20,13 @@ vars:
   XOCHIP_ROM: '{{.ROM_DIR}}/xochip-scrolling.ch8'
   XOCHIP_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/8-scrolling.ch8
   XOCHIP_SHA256: 3f43507c45a949e5b014445853205dd1f36bb532cf25baa22209b7c300c596d7
+  MURDER_SOURCE: '{{.ROM_DIR}}/murder.8o'
+  MURDER_ROM: '{{.ROM_DIR}}/murder.ch8'
+  MURDER_URL: https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/examples/murder.8o
+  MURDER_SHA256: 23a4562d206909cadc01d6293f0d769aa5139c63531bb75b87c9387e555e50b0
+  SAFECRACKER_ROM: '{{.ROM_DIR}}/safecracker.ch8'
+  SAFECRACKER_URL: https://github.com/pushfoo/Octo-Safecracker/releases/download/v1.0.1/safecracker.ch8
+  SAFECRACKER_SHA256: 83842a31b2a74174c2b4a424a58c0c9ceb70f38c855068913595da284118be99
 
 tasks:
   download-conformance-rom:
@@ -135,3 +142,30 @@ tasks:
     deps: [download-xochip-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.XOCHIP_ROM}}
+
+  download-murder-rom:
+    desc: Download, verify and compile Octo's Murder XO-CHIP two-bitplane demo (requires the octo compiler)
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.MURDER_SOURCE}} {{.MURDER_URL}}
+      - 'printf "%s  %s\\n" "{{.MURDER_SHA256}}" "{{.MURDER_SOURCE}}" | shasum -a 256 --check'
+      - octo {{.MURDER_SOURCE}} {{.MURDER_ROM}}
+
+  play-murder:
+    desc: Compile then launch Murder with XO-CHIP colour planes and native audio
+    deps: [download-murder-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.MURDER_ROM}}
+
+  download-safecracker-rom:
+    desc: Download and verify the Safecracker XO-CHIP colour-and-sound ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.SAFECRACKER_ROM}} {{.SAFECRACKER_URL}}
+      - 'printf "%s  %s\\n" "{{.SAFECRACKER_SHA256}}" "{{.SAFECRACKER_ROM}}" | shasum -a 256 --check'
+
+  play-safecracker:
+    desc: Launch Safecracker with XO-CHIP colour planes and native sound
+    deps: [download-safecracker-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.SAFECRACKER_ROM}}
