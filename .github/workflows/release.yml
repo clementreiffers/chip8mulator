@@ -26,22 +26,34 @@ jobs:
           test "$value" = "$(node -p "require('./src/chip8-web/package.json').version")"
           echo "value=$value" >> "$GITHUB_OUTPUT"
 
-  engine:
+  tests:
     needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libudev-dev pkg-config
       - run: cargo test --manifest-path src/chip8-engine/Cargo.toml --all-features
+      - run: cargo test --manifest-path src/chip8-native-gui/Cargo.toml
+
+  engine:
+    needs: [version, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - run: cargo package --manifest-path src/chip8-engine/Cargo.toml --allow-dirty --no-verify
-      - run: mkdir -p release && cp src/chip8-engine/target/package/*.crate release/chip8-engine-${{ needs.version.outputs.version }}.crate
+      - run: |
+          mkdir -p release
+          cp src/chip8-engine/target/package/*.crate release/chip8-engine-${{ needs.version.outputs.version }}.crate
+          cp release/chip8-engine-${{ needs.version.outputs.version }}.crate release/chip8-engine.crate
       - uses: actions/upload-artifact@v4
         with:
           name: engine-release
           path: release
 
   wasm:
-    needs: version
+    needs: [version, tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,14 +65,17 @@ jobs:
       - run: cargo build --manifest-path src/chip8-engine/Cargo.toml --target wasm32-unknown-unknown --features wasm --release
       - run: wasm-bindgen src/chip8-engine/target/wasm32-unknown-unknown/release/chip8_engine.wasm --target web --out-dir release
       - run: wasm-opt -Oz release/chip8_engine_bg.wasm -o release/chip8_engine_bg.wasm
-      - run: cd release && zip chip8-engine-wasm-${{ needs.version.outputs.version }}.zip chip8_engine.js chip8_engine_bg.wasm chip8_engine.d.ts
+      - run: |
+          cd release
+          zip chip8-engine-wasm-${{ needs.version.outputs.version }}.zip chip8_engine.js chip8_engine_bg.wasm chip8_engine.d.ts
+          cp chip8-engine-wasm-${{ needs.version.outputs.version }}.zip chip8-engine-wasm.zip
       - uses: actions/upload-artifact@v4
         with:
           name: wasm-release
           path: release
 
   native-gui:
-    needs: version
+    needs: [version, tests]
     name: native-gui (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -91,22 +106,31 @@ jobs:
       - name: Install Linux audio build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libudev-dev pkg-config
+      - run: cargo test --manifest-path src/chip8-native-gui/Cargo.toml
       - run: cargo build --manifest-path src/chip8-native-gui/Cargo.toml --target ${{ matrix.target }} --release
       - name: Package Unix binary
         if: runner.os != 'Windows'
         shell: bash
-        run: mkdir release && tar -czf release/chip8-native-gui-${{ needs.version.outputs.version }}-${{ matrix.name }}.tar.gz -C src/chip8-native-gui/target/${{ matrix.target }}/release ${{ matrix.binary }}
+        run: |
+          mkdir release
+          archive="chip8-native-gui-${{ needs.version.outputs.version }}-${{ matrix.name }}.tar.gz"
+          tar -czf "release/$archive" -C src/chip8-native-gui/target/${{ matrix.target }}/release ${{ matrix.binary }}
+          cp "release/$archive" "release/chip8-native-gui-${{ matrix.name }}.tar.gz"
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
-        run: New-Item -ItemType Directory release; Compress-Archive -Path src/chip8-native-gui/target/${{ matrix.target }}/release/${{ matrix.binary }} -DestinationPath release/chip8-native-gui-${{ needs.version.outputs.version }}-${{ matrix.name }}.zip
+        run: |
+          New-Item -ItemType Directory release
+          $archive = "chip8-native-gui-${{ needs.version.outputs.version }}-${{ matrix.name }}.zip"
+          Compress-Archive -Path src/chip8-native-gui/target/${{ matrix.target }}/release/${{ matrix.binary }} -DestinationPath "release/$archive"
+          Copy-Item "release/$archive" "release/chip8-native-gui-${{ matrix.name }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.name }}-release
           path: release
 
   web:
-    needs: version
+    needs: [version, tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

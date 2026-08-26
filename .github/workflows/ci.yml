@@ -49,6 +49,7 @@ jobs:
       - name: Install Linux audio build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libudev-dev pkg-config
+      - run: cargo test --manifest-path src/chip8-native-gui/Cargo.toml
       - run: cargo build --manifest-path src/chip8-native-gui/Cargo.toml --target ${{ matrix.target }} --release
 
   web:
