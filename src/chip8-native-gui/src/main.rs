@@ -127,6 +127,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                         {
                             match App::new(bytes, debug_mode, game.profile) {
                                 Ok(loaded_app) => {
+                                    if let Some(recommended_palette) = game.palette {
+                                        for (colour, [red, green, blue]) in
+                                            palette.iter_mut().take(4).zip(recommended_palette)
+                                        {
+                                            *colour = egui::Color32::from_rgb(red, green, blue);
+                                        }
+                                    }
                                     app = loaded_app;
                                     window.set_title(&format!("CHIP-8 — {}", game.name));
                                     library_view.open = false;

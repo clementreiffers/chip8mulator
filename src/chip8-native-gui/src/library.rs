@@ -5,6 +5,8 @@ use serde::Deserialize;
 
 const USER_AGENT: &str = "chip8-native-gui ROM library";
 
+pub type Palette = [[u8; 3]; 4];
+
 /// A public, versioned collection of directly playable CHIP-8 ROM files.
 #[derive(Clone, Copy)]
 struct Source {
@@ -38,6 +40,7 @@ pub struct Game {
     pub source: String,
     pub download_url: String,
     pub profile: CompatibilityProfile,
+    pub palette: Option<Palette>,
 }
 
 pub enum Update {
@@ -121,6 +124,20 @@ struct TreeEntry {
 #[derive(Deserialize)]
 struct CatalogueEntry {
     platform: Option<String>,
+    #[serde(default)]
+    options: CatalogueOptions,
+}
+
+#[derive(Default, Deserialize)]
+struct CatalogueOptions {
+    #[serde(rename = "backgroundColor")]
+    background: Option<String>,
+    #[serde(rename = "fillColor")]
+    fill: Option<String>,
+    #[serde(rename = "fillColor2")]
+    fill_second_plane: Option<String>,
+    #[serde(rename = "blendColor")]
+    blend: Option<String>,
 }
 
 fn fetch_games() -> Result<Vec<Game>, String> {
@@ -169,14 +186,22 @@ fn fetch_source(client: &reqwest::blocking::Client, source: Source) -> Result<Ve
         .into_iter()
         .filter(|entry| entry.kind == "blob" && entry.path.starts_with(source.path_prefix))
         .filter(|entry| entry.path.to_ascii_lowercase().ends_with(".ch8"))
-        .map(|entry| Game {
-            name: game_name(&entry.path),
-            source: source.name.into(),
-            download_url: format!(
-                "https://raw.githubusercontent.com/{}/{}/{}",
-                source.repository, source.revision, entry.path
-            ),
-            profile: profile_for(&entry.path, &catalogue),
+        .map(|entry| {
+            let profile = profile_for(&entry.path, &catalogue);
+            let identifier = game_name(&entry.path);
+            let palette = (profile == CompatibilityProfile::XoChip)
+                .then(|| catalogue.get(&identifier).and_then(palette_for))
+                .flatten();
+            Game {
+                name: identifier,
+                source: source.name.into(),
+                download_url: format!(
+                    "https://raw.githubusercontent.com/{}/{}/{}",
+                    source.repository, source.revision, entry.path
+                ),
+                profile,
+                palette,
+            }
         })
         .collect())
 }
@@ -259,6 +284,27 @@ fn profile_for_platform(platform: &str) -> CompatibilityProfile {
     }
 }
 
+fn palette_for(entry: &CatalogueEntry) -> Option<Palette> {
+    Some([
+        parse_colour(entry.options.background.as_deref()?)?,
+        parse_colour(entry.options.fill.as_deref()?)?,
+        parse_colour(entry.options.fill_second_plane.as_deref()?)?,
+        parse_colour(entry.options.blend.as_deref()?)?,
+    ])
+}
+
+fn parse_colour(value: &str) -> Option<[u8; 3]> {
+    let hex = value.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(&hex[0..2], 16).ok()?,
+        u8::from_str_radix(&hex[2..4], 16).ok()?,
+        u8::from_str_radix(&hex[4..6], 16).ok()?,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +329,22 @@ mod tests {
             CompatibilityProfile::SuperChip
         );
         assert_eq!(profile_for_platform("xochip"), CompatibilityProfile::XoChip);
+    }
+
+    #[test]
+    fn reads_the_four_octo_palette_colours() {
+        let entry = CatalogueEntry {
+            platform: Some("xochip".into()),
+            options: CatalogueOptions {
+                background: Some("#000000".into()),
+                fill: Some("#112233".into()),
+                fill_second_plane: Some("#445566".into()),
+                blend: Some("#778899".into()),
+            },
+        };
+        assert_eq!(
+            palette_for(&entry),
+            Some([[0, 0, 0], [17, 34, 51], [68, 85, 102], [119, 136, 153]])
+        );
     }
 }
