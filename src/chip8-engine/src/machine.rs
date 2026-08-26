@@ -2,7 +2,7 @@ use std::{fmt, time::Duration};
 
 use crate::{
     instruction,
-    peripherals::{DISPLAY_PIXELS, Framebuffer},
+    peripherals::{DisplayMode, Framebuffer},
 };
 
 pub(crate) const RAM_SIZE: usize = 4096;
@@ -30,12 +30,27 @@ const FONT: [u8; 80] = [
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
+pub(crate) const HIGH_FONT_START: u16 = 0xA0;
+const HIGH_FONT: [u8; 160] = [
+    0x3C, 0x7E, 0xE7, 0xC3, 0xC3, 0xC3, 0xE7, 0x7E, 0x3C, 0x00, 0x18, 0x38, 0x78, 0x18, 0x18, 0x18,
+    0x18, 0x18, 0x7E, 0x00, 0x7E, 0xFF, 0x03, 0x06, 0x1C, 0x30, 0x60, 0xC0, 0xFF, 0x00, 0x7E, 0xFF,
+    0x03, 0x1E, 0x03, 0x03, 0x03, 0xFF, 0x7E, 0x00, 0x06, 0x0E, 0x1E, 0x36, 0x66, 0xC6, 0xFF, 0xFF,
+    0x06, 0x00, 0xFF, 0xFF, 0xC0, 0xFE, 0x03, 0x03, 0x03, 0xFF, 0x7E, 0x00, 0x3E, 0x7C, 0xC0, 0xFE,
+    0xC3, 0xC3, 0xC3, 0x7E, 0x3C, 0x00, 0xFF, 0xFF, 0x03, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x00,
+    0x3C, 0x7E, 0xC3, 0x7E, 0x3C, 0x7E, 0xC3, 0x7E, 0x3C, 0x00, 0x3C, 0x7E, 0xC3, 0xC3, 0x7F, 0x3F,
+    0x03, 0x7E, 0x3C, 0x00, 0x3C, 0x7E, 0xC3, 0xC3, 0xFF, 0xFF, 0xC3, 0xC3, 0xC3, 0x00, 0xFC, 0xFE,
+    0xC3, 0xFE, 0xFC, 0xC3, 0xC3, 0xFE, 0xFC, 0x00, 0x3E, 0x7F, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0x7F,
+    0x3E, 0x00, 0xFC, 0xFE, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xFE, 0xFC, 0x00, 0xFF, 0xFF, 0xC0, 0xFE,
+    0xFE, 0xC0, 0xC0, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xC0, 0xFE, 0xFE, 0xC0, 0xC0, 0xC0, 0xC0, 0x00,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompatibilityProfile {
     #[default]
     OriginalChip8,
     Chip48,
     Modern,
+    SuperChip,
 }
 
 impl CompatibilityProfile {
@@ -46,13 +61,16 @@ impl CompatibilityProfile {
         matches!(self, Self::OriginalChip8)
     }
     pub(crate) const fn jump_uses_vx(self) -> bool {
-        matches!(self, Self::Chip48)
+        matches!(self, Self::Chip48 | Self::SuperChip)
     }
     pub(crate) const fn draw_wraps(self) -> bool {
-        !matches!(self, Self::Chip48)
+        !matches!(self, Self::Chip48 | Self::SuperChip)
     }
     pub(crate) const fn logic_clears_vf(self) -> bool {
         matches!(self, Self::OriginalChip8)
+    }
+    pub(crate) const fn supports_superchip(self) -> bool {
+        matches!(self, Self::SuperChip)
     }
 }
 
@@ -75,6 +93,7 @@ impl Default for Chip8Config {
 pub struct CycleResult {
     pub drew: bool,
     pub waiting_for_key: bool,
+    pub halted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,6 +144,7 @@ pub struct Chip8 {
     pub(crate) sound_timer: u8,
     pub(crate) keys: [bool; 16],
     pub(crate) display: Framebuffer,
+    pub(crate) rpl: [u8; 8],
     pub(crate) config: Chip8Config,
     rng_state: u32,
     timer_remainder: Duration,
@@ -136,6 +156,8 @@ impl Chip8 {
         let mut memory = [0; RAM_SIZE];
         let font_end = usize::from(FONT_START) + FONT.len();
         memory[usize::from(FONT_START)..font_end].copy_from_slice(&FONT);
+        let high_font_end = usize::from(HIGH_FONT_START) + HIGH_FONT.len();
+        memory[usize::from(HIGH_FONT_START)..high_font_end].copy_from_slice(&HIGH_FONT);
         Self {
             memory,
             v: [0; 16],
@@ -147,6 +169,7 @@ impl Chip8 {
             sound_timer: 0,
             keys: [false; 16],
             display: Framebuffer::default(),
+            rpl: [0; 8],
             config,
             rng_state: config.seed,
             timer_remainder: Duration::ZERO,
@@ -173,6 +196,8 @@ impl Chip8 {
         self.sound_timer = 0;
         self.keys = [false; 16];
         self.display.clear();
+        self.display.set_mode(DisplayMode::LowResolution);
+        self.rpl = [0; 8];
         self.rng_state = self.config.seed;
         self.timer_remainder = Duration::ZERO;
         Ok(())
@@ -205,8 +230,12 @@ impl Chip8 {
     }
 
     #[must_use]
-    pub fn framebuffer(&self) -> &[u8; DISPLAY_PIXELS] {
+    pub fn framebuffer(&self) -> &[u8] {
         self.display.pixels()
+    }
+    #[must_use]
+    pub fn display_dimensions(&self) -> (usize, usize) {
+        self.display.dimensions()
     }
     /// Complete RAM snapshot for diagnostics and host-side inspection.
     #[must_use]

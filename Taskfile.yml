@@ -14,6 +14,9 @@ vars:
   SPACEINVADERS_ROM: '{{.ROM_DIR}}/space-invaders.ch8'
   SPACEINVADERS_URL: https://raw.githubusercontent.com/kripod/chip8-roms/master/games/Space%20Invaders%20%5BDavid%20Winter%5D.ch8
   SPACEINVADERS_SHA256: 00bb7001de52b562d98357d33375406c6d0308466d7d95c2580537d2451a75cd
+  SUPERCHIP_ROM: '{{.ROM_DIR}}/superchip-scrolling.ch8'
+  SUPERCHIP_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/8-scrolling.ch8
+  SUPERCHIP_SHA256: 3f43507c45a949e5b014445853205dd1f36bb532cf25baa22209b7c300c596d7
 
 tasks:
   download-conformance-rom:
@@ -91,3 +94,22 @@ tasks:
     deps: [download-spaceinvaders-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode {{.ROOT_DIR}}/{{.SPACEINVADERS_ROM}}
+
+  download-superchip-rom:
+    desc: Download and verify Timendus' Super-CHIP scrolling ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.SUPERCHIP_ROM}} {{.SUPERCHIP_URL}}
+      - 'printf "%s  %s\\n" "{{.SUPERCHIP_SHA256}}" "{{.SUPERCHIP_ROM}}" | shasum -a 256 --check'
+
+  play-superchip:
+    desc: Launch the Super-CHIP scrolling ROM in native GUI
+    deps: [download-superchip-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile superchip {{.ROOT_DIR}}/{{.SUPERCHIP_ROM}}
+
+  debug-superchip:
+    desc: Launch the Super-CHIP scrolling ROM in native GUI debug mode
+    deps: [download-superchip-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile superchip {{.ROOT_DIR}}/{{.SUPERCHIP_ROM}}

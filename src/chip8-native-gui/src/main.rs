@@ -6,7 +6,7 @@ mod renderer;
 use std::{error::Error, ffi::OsString, path::PathBuf, sync::Arc, time::Instant};
 
 use app::App;
-use chip8_engine::{CompatibilityProfile, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use chip8_engine::CompatibilityProfile;
 use input::key_to_chip8;
 use renderer::Renderer;
 use winit::{
@@ -18,7 +18,7 @@ use winit::{
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (rom_path, debug_mode) = parse_args(std::env::args_os().skip(1))?;
+    let (rom_path, debug_mode, profile) = parse_args(std::env::args_os().skip(1))?;
     let rom = std::fs::read(&rom_path)?;
     let title = format!("CHIP-8 — {}", rom_path.display());
     let event_loop = EventLoop::new()?;
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None,
     );
     let mut frame_texture = None;
-    let mut app = App::new(rom, debug_mode)?;
+    let mut app = App::new(rom, debug_mode, profile)?;
     let mut last_frame = Instant::now();
 
     event_loop.run(move |event, event_loop| {
@@ -62,6 +62,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 return;
                             }
                             if pressed && app.handle_command(code) {
+                                if app.is_halted() {
+                                    event_loop.exit();
+                                }
                                 return;
                             }
                             if let Some(key) = key_to_chip8(code)
@@ -74,10 +77,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     WindowEvent::RedrawRequested => {
                         let now = Instant::now();
-                        if let Err(error) = app.advance(now.duration_since(last_frame)) {
-                            eprintln!("emulation error: {error}");
-                            event_loop.exit();
-                            return;
+                        match app.advance(now.duration_since(last_frame)) {
+                            Ok(true) => {
+                                event_loop.exit();
+                                return;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                eprintln!("emulation error: {error}");
+                                event_loop.exit();
+                                return;
+                            }
                         }
                         last_frame = now;
                         let upload_frame = app.take_frame_dirty();
@@ -117,12 +127,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_args(args: impl Iterator<Item = OsString>) -> Result<(PathBuf, bool), String> {
+fn parse_args(
+    mut args: impl Iterator<Item = OsString>,
+) -> Result<(PathBuf, bool, CompatibilityProfile), String> {
     let mut rom_path = None;
     let mut debug_mode = false;
-    for arg in args {
+    let mut profile = CompatibilityProfile::OriginalChip8;
+    while let Some(arg) = args.next() {
         if arg == "--debug-mode" {
             debug_mode = true;
+        } else if arg == "--profile" {
+            let value = args.next().ok_or_else(|| {
+                format!(
+                    "--profile requires a value (chip8, chip48, modern, superchip)\n\n{}",
+                    usage()
+                )
+            })?;
+            profile = match value.to_string_lossy().as_ref() {
+                "chip8" => CompatibilityProfile::OriginalChip8,
+                "chip48" => CompatibilityProfile::Chip48,
+                "modern" => CompatibilityProfile::Modern,
+                "superchip" => CompatibilityProfile::SuperChip,
+                _ => {
+                    return Err(format!(
+                        "unknown profile: {}\n\n{}",
+                        value.to_string_lossy(),
+                        usage()
+                    ));
+                }
+            };
         } else if arg.to_string_lossy().starts_with('-') {
             return Err(format!(
                 "unknown option: {}\n\n{}",
@@ -134,12 +167,12 @@ fn parse_args(args: impl Iterator<Item = OsString>) -> Result<(PathBuf, bool), S
         }
     }
     rom_path
-        .map(|path| (path, debug_mode))
+        .map(|path| (path, debug_mode, profile))
         .ok_or_else(|| usage().to_owned())
 }
 
 fn usage() -> &'static str {
-    "usage: chip8-native-gui [--debug-mode] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3 compatibility profile, Esc quit."
+    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4 compatibility profile, Esc quit."
 }
 
 fn show_interface(
@@ -149,8 +182,10 @@ fn show_interface(
     upload_frame: bool,
     debug_mode: bool,
 ) {
-    let image = frame_image(app.framebuffer());
-    if let Some(texture) = frame_texture {
+    let image = frame_image(app.framebuffer(), app.display_dimensions());
+    if let Some(texture) = frame_texture
+        && texture.size() == image.size
+    {
         if upload_frame {
             texture.set(image, egui::TextureOptions::NEAREST);
         }
@@ -177,9 +212,9 @@ fn show_interface(
     }
 }
 
-fn frame_image(framebuffer: &[u8]) -> egui::ColorImage {
+fn frame_image(framebuffer: &[u8], dimensions: (usize, usize)) -> egui::ColorImage {
     let mut image = egui::ColorImage::new(
-        [DISPLAY_WIDTH, DISPLAY_HEIGHT],
+        [dimensions.0, dimensions.1],
         egui::Color32::from_rgb(2, 4, 6),
     );
     for (output, input) in image.pixels.iter_mut().zip(framebuffer) {
@@ -222,6 +257,9 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             }
             if ui.button("Modern (F3)").clicked() {
                 profile = Some(CompatibilityProfile::Modern);
+            }
+            if ui.button("Super-CHIP (F4)").clicked() {
+                profile = Some(CompatibilityProfile::SuperChip);
             }
         });
     });
@@ -315,6 +353,7 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             CompatibilityProfile::OriginalChip8 => winit::keyboard::KeyCode::F1,
             CompatibilityProfile::Chip48 => winit::keyboard::KeyCode::F2,
             CompatibilityProfile::Modern => winit::keyboard::KeyCode::F3,
+            CompatibilityProfile::SuperChip => winit::keyboard::KeyCode::F4,
         };
         let _ = app.handle_command(key);
     }
@@ -325,7 +364,11 @@ fn show_screen(ui: &mut egui::Ui, texture: &egui::TextureHandle, maximum_width: 
         || ui.available_width(),
         |maximum| ui.available_width().min(maximum),
     );
-    ui.image((texture.id(), egui::vec2(width, width / 2.0)));
+    let [texture_width, texture_height] = texture.size();
+    ui.image((
+        texture.id(),
+        egui::vec2(width, width * texture_height as f32 / texture_width as f32),
+    ));
 }
 
 fn draw_chart(ui: &mut egui::Ui, entries: &[&debug::TraceEntry]) {
@@ -372,20 +415,45 @@ mod tests {
         let args = [OsString::from("--debug-mode"), OsString::from("rom.ch8")];
         assert_eq!(
             parse_args(args.into_iter()).expect("valid args"),
-            (PathBuf::from("rom.ch8"), true)
+            (
+                PathBuf::from("rom.ch8"),
+                true,
+                CompatibilityProfile::OriginalChip8
+            )
         );
         let args = [OsString::from("rom.ch8"), OsString::from("--debug-mode")];
         assert_eq!(
             parse_args(args.into_iter()).expect("valid args"),
-            (PathBuf::from("rom.ch8"), true)
+            (
+                PathBuf::from("rom.ch8"),
+                true,
+                CompatibilityProfile::OriginalChip8
+            )
+        );
+    }
+
+    #[test]
+    fn parses_superchip_profile() {
+        let args = [
+            OsString::from("--profile"),
+            OsString::from("superchip"),
+            OsString::from("rom.ch8"),
+        ];
+        assert_eq!(
+            parse_args(args.into_iter()).expect("valid args"),
+            (
+                PathBuf::from("rom.ch8"),
+                false,
+                CompatibilityProfile::SuperChip
+            )
         );
     }
 
     #[test]
     fn framebuffer_pixels_use_visible_debug_colors() {
-        let mut framebuffer = vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT];
+        let mut framebuffer = vec![0; 64 * 32];
         framebuffer[1] = 1;
-        let image = frame_image(&framebuffer);
+        let image = frame_image(&framebuffer, (64, 32));
         assert_eq!(image.pixels[0], egui::Color32::from_rgb(2, 4, 6));
         assert_eq!(image.pixels[1], egui::Color32::from_rgb(51, 255, 186));
     }

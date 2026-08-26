@@ -87,7 +87,13 @@ pub fn disassemble(opcode: u16) -> String {
     match opcode {
         0x00E0 => "CLS".into(),
         0x00EE => "RET".into(),
+        0x00FB => "SCR".into(),
+        0x00FC => "SCL".into(),
+        0x00FD => "EXIT".into(),
+        0x00FE => "LOW".into(),
+        0x00FF => "HIGH".into(),
         _ => match opcode & 0xF000 {
+            0x0000 if opcode & 0xFFF0 == 0x00C0 => format!("SCD {n}"),
             0x0000 => format!("SYS {nnn:#05X}"),
             0x1000 => format!("JP {nnn:#05X}"),
             0x2000 => format!("CALL {nnn:#05X}"),
@@ -125,9 +131,12 @@ pub fn disassemble(opcode: u16) -> String {
                 0x18 => format!("LD ST, V{x:X}"),
                 0x1E => format!("ADD I, V{x:X}"),
                 0x29 => format!("LD F, V{x:X}"),
+                0x30 => format!("LD HF, V{x:X}"),
                 0x33 => format!("LD B, V{x:X}"),
                 0x55 => format!("LD [I], V0..V{x:X}"),
                 0x65 => format!("LD V0..V{x:X}, [I]"),
+                0x75 => format!("LD RPL, V0..V{x:X}"),
+                0x85 => format!("LD V0..V{x:X}, RPL"),
                 _ => invalid(opcode),
             },
             _ => invalid(opcode),
@@ -147,6 +156,8 @@ mod tests {
     fn disassembles_representative_opcodes() {
         assert_eq!(disassemble(0x60AB), "LD V0, 0xAB");
         assert_eq!(disassemble(0xD125), "DRW V1, V2, 5");
+        assert_eq!(disassemble(0x00FF), "HIGH");
+        assert_eq!(disassemble(0xF375), "LD RPL, V0..V3");
         assert_eq!(disassemble(0x5123), "INVALID 0x5123");
     }
 

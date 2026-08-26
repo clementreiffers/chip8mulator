@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use chip8_engine::{Chip8, Chip8Config, Chip8Error, CompatibilityProfile, DISPLAY_PIXELS};
+use chip8_engine::{Chip8, Chip8Config, Chip8Error, CompatibilityProfile};
 use winit::keyboard::KeyCode;
 
 use crate::debug::{DebugState, TraceEntry};
@@ -14,14 +14,18 @@ pub struct App {
     profile: CompatibilityProfile,
     cpu_remainder: Duration,
     paused: bool,
+    halted: bool,
     frame_dirty: bool,
     debug: Option<DebugState>,
     skip_breakpoint_once: Option<u16>,
 }
 
 impl App {
-    pub fn new(rom: Vec<u8>, debug_mode: bool) -> Result<Self, Chip8Error> {
-        let profile = CompatibilityProfile::OriginalChip8;
+    pub fn new(
+        rom: Vec<u8>,
+        debug_mode: bool,
+        profile: CompatibilityProfile,
+    ) -> Result<Self, Chip8Error> {
         let mut app = Self {
             chip8: Chip8::new(Chip8Config {
                 profile,
@@ -31,6 +35,7 @@ impl App {
             profile,
             cpu_remainder: Duration::ZERO,
             paused: false,
+            halted: false,
             frame_dirty: true,
             debug: debug_mode.then(DebugState::default),
             skip_breakpoint_once: None,
@@ -58,13 +63,17 @@ impl App {
                 .is_ok(),
             KeyCode::F2 => self.set_profile(CompatibilityProfile::Chip48).is_ok(),
             KeyCode::F3 => self.set_profile(CompatibilityProfile::Modern).is_ok(),
+            KeyCode::F4 => self.set_profile(CompatibilityProfile::SuperChip).is_ok(),
             _ => false,
         }
     }
 
-    pub fn advance(&mut self, elapsed: Duration) -> Result<(), Chip8Error> {
+    pub fn advance(&mut self, elapsed: Duration) -> Result<bool, Chip8Error> {
+        if self.halted {
+            return Ok(true);
+        }
         if self.paused {
-            return Ok(());
+            return Ok(false);
         }
 
         let elapsed = elapsed.min(MAX_ELAPSED);
@@ -82,16 +91,24 @@ impl App {
             self.cpu_remainder -= cycle_period;
             let result = self.execute_one()?;
             self.frame_dirty |= result.drew;
+            if result.halted {
+                return Ok(true);
+            }
             if result.waiting_for_key {
                 break;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     #[must_use]
-    pub fn framebuffer(&self) -> &[u8; DISPLAY_PIXELS] {
+    pub fn framebuffer(&self) -> &[u8] {
         self.chip8.framebuffer()
+    }
+
+    #[must_use]
+    pub fn display_dimensions(&self) -> (usize, usize) {
+        self.chip8.display_dimensions()
     }
 
     pub fn take_frame_dirty(&mut self) -> bool {
@@ -108,6 +125,11 @@ impl App {
 
     pub fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    #[must_use]
+    pub fn is_halted(&self) -> bool {
+        self.halted
     }
 
     pub fn toggle_pause(&mut self) {
@@ -137,6 +159,7 @@ impl App {
         self.chip8.load_rom(&self.rom)?;
         self.cpu_remainder = Duration::ZERO;
         self.frame_dirty = true;
+        self.halted = false;
         self.skip_breakpoint_once = None;
         if let Some(debug) = &mut self.debug {
             debug.clear_trace();
@@ -172,6 +195,9 @@ impl App {
         if let (Some(debug), Some(opcode)) = (&mut self.debug, opcode) {
             debug.record(TraceEntry::new(pc, opcode, analysis_time));
         }
+        if let Ok(cycle) = &result {
+            self.halted |= cycle.halted;
+        }
         result
     }
 
@@ -189,7 +215,8 @@ mod tests {
 
     #[test]
     fn pause_prevents_cpu_execution() {
-        let mut app = App::new(vec![0x60, 0x01], false).expect("valid ROM");
+        let mut app = App::new(vec![0x60, 0x01], false, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
         app.handle_command(KeyCode::Space);
         app.advance(Duration::from_millis(10)).expect("valid ROM");
         assert_eq!(app.chip8.registers()[0], 0);
@@ -197,15 +224,20 @@ mod tests {
 
     #[test]
     fn profile_command_restarts_the_machine() {
-        let mut app = App::new(vec![0x60, 0x01], false).expect("valid ROM");
+        let mut app = App::new(vec![0x60, 0x01], false, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
         assert!(app.handle_command(KeyCode::F2));
         assert_eq!(app.profile, CompatibilityProfile::Chip48);
         assert_eq!(app.chip8.program_counter(), 0x200);
+
+        assert!(app.handle_command(KeyCode::F4));
+        assert_eq!(app.profile, CompatibilityProfile::SuperChip);
     }
 
     #[test]
     fn breakpoint_stops_before_the_instruction_and_step_executes_it() {
-        let mut app = App::new(vec![0x60, 0x01], true).expect("valid ROM");
+        let mut app = App::new(vec![0x60, 0x01], true, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
         app.debug_mut()
             .expect("debug enabled")
             .toggle_breakpoint(0x200);
@@ -214,5 +246,13 @@ mod tests {
         assert_eq!(app.chip8.program_counter(), 0x200);
         app.step_once().expect("step succeeds");
         assert_eq!(app.chip8.registers()[0], 1);
+    }
+
+    #[test]
+    fn superchip_exit_halts_the_application() {
+        let mut app =
+            App::new(vec![0x00, 0xFD], false, CompatibilityProfile::SuperChip).expect("valid ROM");
+        assert!(app.advance(Duration::from_millis(10)).expect("valid ROM"));
+        assert!(app.is_halted());
     }
 }

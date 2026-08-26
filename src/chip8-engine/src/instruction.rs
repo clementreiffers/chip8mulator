@@ -1,4 +1,7 @@
-use crate::machine::{Chip8, Chip8Error, CycleResult, RAM_SIZE};
+use crate::{
+    machine::{Chip8, Chip8Error, CycleResult, HIGH_FONT_START, RAM_SIZE},
+    peripherals::DisplayMode,
+};
 
 pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
     let pc = chip.pc;
@@ -31,6 +34,27 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
                 }
                 chip.sp -= 1;
                 next_pc = chip.stack[chip.sp];
+            }
+            0x00FB if chip.config.profile.supports_superchip() => {
+                chip.display.scroll_right(4);
+                result.drew = true;
+            }
+            0x00FC if chip.config.profile.supports_superchip() => {
+                chip.display.scroll_left(4);
+                result.drew = true;
+            }
+            0x00FD if chip.config.profile.supports_superchip() => result.halted = true,
+            0x00FE if chip.config.profile.supports_superchip() => {
+                chip.display.set_mode(DisplayMode::LowResolution);
+                result.drew = true;
+            }
+            0x00FF if chip.config.profile.supports_superchip() => {
+                chip.display.set_mode(DisplayMode::HighResolution);
+                result.drew = true;
+            }
+            0x00C0..=0x00CF if chip.config.profile.supports_superchip() => {
+                chip.display.scroll_down(usize::from(n));
+                result.drew = true;
             }
             _ => {} // 0NNN is a historical RCA 1802 call, ignored by modern interpreters.
         },
@@ -76,23 +100,38 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
         }
         0xC000 => chip.v[x] = chip.next_random() & kk,
         0xD000 => {
+            let sprite_len = if n == 0 && chip.config.profile.supports_superchip() {
+                32
+            } else {
+                usize::from(n)
+            };
             let end = chip
                 .i
-                .checked_add(u16::from(n))
+                .checked_add(sprite_len as u16)
                 .ok_or(Chip8Error::MemoryOutOfBounds { address: chip.i })?;
             if usize::from(end) > RAM_SIZE {
                 return Err(Chip8Error::MemoryOutOfBounds { address: end });
             }
-            let mut sprite = [0u8; 15];
-            for (offset, byte) in sprite.iter_mut().take(usize::from(n)).enumerate() {
+            let mut sprite = [0u8; 32];
+            for (offset, byte) in sprite.iter_mut().take(sprite_len).enumerate() {
                 *byte = chip.read(chip.i + offset as u16)?;
             }
-            chip.v[0xF] = u8::from(chip.display.draw(
-                chip.v[x],
-                chip.v[y],
-                &sprite[..usize::from(n)],
-                chip.config.profile.draw_wraps(),
-            ));
+            let collision = if n == 0 && chip.config.profile.supports_superchip() {
+                chip.display.draw_16x16(
+                    chip.v[x],
+                    chip.v[y],
+                    &sprite,
+                    chip.config.profile.draw_wraps(),
+                )
+            } else {
+                chip.display.draw(
+                    chip.v[x],
+                    chip.v[y],
+                    &sprite[..sprite_len],
+                    chip.config.profile.draw_wraps(),
+                )
+            };
+            chip.v[0xF] = u8::from(collision);
             result.drew = true;
         }
         0xE000 => match kk {
@@ -121,6 +160,9 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
             0x18 => chip.sound_timer = chip.v[x],
             0x1E => chip.i = chip.i.wrapping_add(u16::from(chip.v[x])),
             0x29 => chip.i = crate::machine::FONT_START + 5 * u16::from(chip.v[x] & 0x0F),
+            0x30 if chip.config.profile.supports_superchip() => {
+                chip.i = HIGH_FONT_START + 10 * u16::from(chip.v[x] & 0x0F)
+            }
             0x33 => {
                 let value = chip.v[x];
                 chip.write(chip.i, value / 100)?;
@@ -139,6 +181,12 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
             }
             0x55 => store_registers(chip, x)?,
             0x65 => load_registers(chip, x)?,
+            0x75 if chip.config.profile.supports_superchip() && x < chip.rpl.len() => {
+                chip.rpl[..=x].copy_from_slice(&chip.v[..=x]);
+            }
+            0x85 if chip.config.profile.supports_superchip() && x < chip.rpl.len() => {
+                chip.v[..=x].copy_from_slice(&chip.rpl[..=x]);
+            }
             _ => return invalid(opcode, pc),
         },
         _ => return invalid(opcode, pc),
@@ -264,6 +312,15 @@ mod tests {
         c.load_rom(&bytes).expect("valid ROM");
         c
     }
+    fn superchip(opcodes: &[u16]) -> Chip8 {
+        let mut c = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip,
+            ..Chip8Config::default()
+        });
+        let bytes: Vec<_> = opcodes.iter().flat_map(|op| op.to_be_bytes()).collect();
+        c.load_rom(&bytes).expect("valid ROM");
+        c
+    }
     fn run(c: &mut Chip8, count: usize) {
         for _ in 0..count {
             c.step().expect("valid instruction");
@@ -296,7 +353,7 @@ mod tests {
         assert_eq!(&c.memory[0x300..0x303], &[2, 3, 1]);
         run(&mut c, 1);
         assert_eq!(c.i, 0x50 + 5 * 7);
-        run(&mut c, 5);
+        run(&mut c, 7);
         assert_eq!(c.v[0], 0xE7);
     }
     #[test]
@@ -384,6 +441,44 @@ mod tests {
         assert!(matches!(
             c.step(),
             Err(Chip8Error::InvalidOpcode { opcode: 0x5123, .. })
+        ));
+    }
+
+    #[test]
+    fn superchip_controls_resolution_scrolling_and_halt() {
+        let mut c = superchip(&[
+            0x00FF, 0xA210, 0x6000, 0x6100, 0xD011, 0x00FB, 0x00C2, 0x00FD,
+        ]);
+        c.memory[0x210] = 0x80;
+        run(&mut c, 7);
+        assert_eq!(c.display.dimensions(), (128, 64));
+        assert_eq!(c.display.pixels()[2 * 128 + 4], 1);
+        assert!(c.step().expect("halt").halted);
+    }
+
+    #[test]
+    fn superchip_supports_large_sprites_fonts_and_rpl() {
+        let mut c = superchip(&[
+            0x600A, 0xF030, 0xA220, 0x6100, 0x6200, 0xD120, 0x6033, 0x6111, 0xF175, 0x6000, 0x6100,
+            0xF185,
+        ]);
+        for byte in &mut c.memory[0x220..0x240] {
+            *byte = 0xFF;
+        }
+        run(&mut c, 2);
+        assert_eq!(c.i, HIGH_FONT_START + 10 * 10);
+        run(&mut c, 4);
+        assert_eq!(c.v[0xF], 0);
+        run(&mut c, 6);
+        assert_eq!((c.v[0], c.v[1]), (0x33, 0x11));
+    }
+
+    #[test]
+    fn superchip_rpl_rejects_registers_above_v7() {
+        let mut c = superchip(&[0xFF75]);
+        assert!(matches!(
+            c.step(),
+            Err(Chip8Error::InvalidOpcode { opcode: 0xFF75, .. })
         ));
     }
 }

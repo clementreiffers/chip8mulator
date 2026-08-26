@@ -58,6 +58,12 @@ impl WasmChip8 {
     pub fn framebuffer(&self) -> Vec<u8> {
         self.core.framebuffer().to_vec()
     }
+    pub fn display_width(&self) -> usize {
+        self.core.display_dimensions().0
+    }
+    pub fn display_height(&self) -> usize {
+        self.core.display_dimensions().1
+    }
     pub fn sound_active(&self) -> bool {
         self.core.sound_active()
     }

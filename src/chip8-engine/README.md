@@ -18,7 +18,9 @@ let pixels = chip.framebuffer();
 ```
 
 `Chip8Config` accepts a deterministic PRNG seed and one of the compatibility
-profiles `OriginalChip8` (the default), `Chip48`, or `Modern`.
+profiles `OriginalChip8` (the default), `Chip48`, `Modern`, or modern
+`SuperChip`. Super-CHIP programs can switch the framebuffer between 64×32 and
+128×64; query `display_dimensions()` whenever presenting `framebuffer()`.
 
 ## WebAssembly
 
@@ -41,6 +43,9 @@ chip8.advance_time_ms(deltaMs);
 canvasPresent(chip8.framebuffer());
 if (chip8.sound_active()) hostAudioOn();
 ```
+
+Use `display_width()` and `display_height()` to size the canvas before
+presenting the framebuffer.
 
 The JavaScript host maps keyboard input through `set_key(key, pressed)`, where
 `key` is in the CHIP-8 range `0x0..=0xF`.
