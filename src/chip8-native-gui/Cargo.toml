@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 chip8-engine = { path = "../chip8-engine" }
+egui = "0.28.1"
+egui-wgpu = "0.28.1"
+egui-winit = "0.28.1"
 pollster = "0.3"
 wgpu = "0.20"
 winit = "0.29"

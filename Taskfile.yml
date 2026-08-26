@@ -49,11 +49,23 @@ tasks:
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.HELLOWORLD_ROM}}
 
+  debug-helloworld:
+    desc: Launch hello-world ROM in native GUI debug mode
+    deps: [download-helloworld-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode {{.ROOT_DIR}}/{{.HELLOWORLD_ROM}}
+
   test-flags-gui:
     desc: Launch interactive flags test ROM in native GUI
     deps: [download-flags-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.FLAGS_ROM}}
+
+  debug-flags:
+    desc: Launch interactive flags test ROM in native GUI debug mode
+    deps: [download-flags-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode {{.ROOT_DIR}}/{{.FLAGS_ROM}}
 
   download-spaceinvaders-rom:
     desc: Download and verify Space Invaders ROM
@@ -62,8 +74,20 @@ tasks:
       - curl --fail --location --retry 3 --output {{.SPACEINVADERS_ROM}} {{.SPACEINVADERS_URL}}
       - 'printf "%s  %s\\n" "{{.SPACEINVADERS_SHA256}}" "{{.SPACEINVADERS_ROM}}" | shasum -a 256 --check'
 
+  debug-conformance:
+    desc: Launch corax89 conformance ROM in native GUI debug mode
+    deps: [download-conformance-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode {{.ROOT_DIR}}/{{.CORAX89_ROM}}
+
   play-spaceinvaders:
     desc: Launch Space Invaders in native GUI
     deps: [download-spaceinvaders-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.SPACEINVADERS_ROM}}
+
+  debug-spaceinvaders:
+    desc: Launch Space Invaders in native GUI debug mode
+    deps: [download-spaceinvaders-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode {{.ROOT_DIR}}/{{.SPACEINVADERS_ROM}}
