@@ -103,7 +103,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 match event {
                     WindowEvent::CloseRequested => event_loop.exit(),
                     WindowEvent::Resized(size) => renderer.resize(size),
-                    WindowEvent::KeyboardInput { event, .. } if !egui_response.consumed => {
+                    WindowEvent::KeyboardInput { event, .. }
+                        if should_handle_keyboard_input(
+                            library_view.open,
+                            egui_response.consumed,
+                        ) =>
+                    {
                         let pressed = event.state == ElementState::Pressed;
                         if let PhysicalKey::Code(code) = event.physical_key {
                             if pressed && code == winit::keyboard::KeyCode::Escape {
@@ -281,6 +286,10 @@ fn parse_args(
     Ok((rom_path, debug_mode, profile, palette))
 }
 
+const fn should_handle_keyboard_input(library_open: bool, egui_consumed: bool) -> bool {
+    !library_open || !egui_consumed
+}
+
 fn parse_palette(value: &OsString) -> Result<[egui::Color32; 16], String> {
     let value = value.to_string_lossy();
     let colors: Vec<_> = value
@@ -372,6 +381,7 @@ fn show_interface(
         egui::Panel::top("window_options").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Bibliothèque").clicked() {
+                    app.stop_audio();
                     library_view.open = true;
                 }
                 ui.menu_button("Options", |ui| {
@@ -583,6 +593,7 @@ fn show_debug_interface(
     egui::Panel::top("debug_controls").show(ui, |ui| {
         ui.horizontal(|ui| {
             if ui.button("Bibliothèque").clicked() {
+                app.stop_audio();
                 *library_open = true;
             }
             if ui
@@ -775,6 +786,14 @@ mod tests {
         assert!(!debug);
         assert_eq!(profile, CompatibilityProfile::OriginalChip8);
         assert_eq!(palette, DEFAULT_PALETTE);
+    }
+
+    #[test]
+    fn game_input_is_not_blocked_by_egui() {
+        assert!(should_handle_keyboard_input(false, true));
+        assert!(should_handle_keyboard_input(false, false));
+        assert!(should_handle_keyboard_input(true, false));
+        assert!(!should_handle_keyboard_input(true, true));
     }
 
     #[test]

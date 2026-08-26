@@ -146,7 +146,14 @@ impl CompatibilityProfile {
         matches!(self, Self::OriginalChip8 | Self::SuperChipCompatibility)
     }
     pub(crate) const fn key_waits_for_release(self) -> bool {
-        self.supports_superchip()
+        matches!(
+            self,
+            Self::SuperChip10
+                | Self::SuperChip11
+                | Self::SuperChipCompatibility
+                | Self::SuperChipModern
+                | Self::SuperChip
+        )
     }
 }
 

@@ -54,6 +54,11 @@ const SOURCES: [Source; 3] = [
     },
 ];
 
+const SAFECRACKER_SOURCE_URL: &str =
+    "https://raw.githubusercontent.com/pushfoo/Octo-Safecracker/main/main.8o";
+const ALIEN_INV8SION_SOURCE_URL: &str =
+    "https://raw.githubusercontent.com/Timendus/alien-inv8sion/main/bin/alien-inv8sion-octo.8o";
+
 #[derive(Clone, Debug)]
 pub struct Game {
     pub name: String,
@@ -191,7 +196,7 @@ struct CatalogueOptions {
 
 fn fetch_games() -> Result<Vec<Game>, String> {
     let client = client()?;
-    let mut games = Vec::new();
+    let mut games = vec![safecracker_game(), alien_inv8sion_game()];
     let mut errors = Vec::new();
     for source in SOURCES {
         match fetch_source(&client, source) {
@@ -211,6 +216,28 @@ fn fetch_games() -> Result<Vec<Game>, String> {
             .then(left.source.cmp(&right.source))
     });
     Ok(games)
+}
+
+fn safecracker_game() -> Game {
+    Game {
+        name: "Safecracker".into(),
+        source: "Safecracker — pushfoo".into(),
+        download_url: SAFECRACKER_SOURCE_URL.into(),
+        profile: CompatibilityProfile::XoChip,
+        palette: None,
+        launch_kind: LaunchKind::OctoSource,
+    }
+}
+
+fn alien_inv8sion_game() -> Game {
+    Game {
+        name: "Alien Inv8sion".into(),
+        source: "Alien Inv8sion — Timendus".into(),
+        download_url: ALIEN_INV8SION_SOURCE_URL.into(),
+        profile: CompatibilityProfile::XoChip,
+        palette: None,
+        launch_kind: LaunchKind::OctoSource,
+    }
 }
 
 fn fetch_source(client: &reqwest::blocking::Client, source: Source) -> Result<Vec<Game>, String> {
@@ -640,6 +667,28 @@ mod tests {
             launch_kind: LaunchKind::OctoSource,
         };
         assert_eq!(game.name, "Murder");
+        assert_eq!(game.profile, CompatibilityProfile::XoChip);
+        assert_eq!(game.launch_kind, LaunchKind::OctoSource);
+    }
+
+    #[test]
+    fn safecracker_is_an_integrated_xo_chip_game() {
+        let game = safecracker_game();
+
+        assert_eq!(game.name, "Safecracker");
+        assert_eq!(game.source, "Safecracker — pushfoo");
+        assert_eq!(game.download_url, SAFECRACKER_SOURCE_URL);
+        assert_eq!(game.profile, CompatibilityProfile::XoChip);
+        assert_eq!(game.launch_kind, LaunchKind::OctoSource);
+    }
+
+    #[test]
+    fn alien_inv8sion_is_an_integrated_xo_chip_game() {
+        let game = alien_inv8sion_game();
+
+        assert_eq!(game.name, "Alien Inv8sion");
+        assert_eq!(game.source, "Alien Inv8sion — Timendus");
+        assert_eq!(game.download_url, ALIEN_INV8SION_SOURCE_URL);
         assert_eq!(game.profile, CompatibilityProfile::XoChip);
         assert_eq!(game.launch_kind, LaunchKind::OctoSource);
     }

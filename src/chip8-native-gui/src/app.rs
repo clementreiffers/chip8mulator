@@ -151,6 +151,10 @@ impl App {
         Arc::clone(&self.audio)
     }
 
+    pub fn stop_audio(&self) {
+        self.audio.update(audio::AudioSnapshot::default());
+    }
+
     pub fn take_frame_dirty(&mut self) -> bool {
         std::mem::replace(&mut self.frame_dirty, false)
     }
@@ -415,6 +419,27 @@ mod tests {
             audio.clone(),
         )
         .expect("valid replacement ROM");
+
+        assert!(!audio.snapshot().active);
+    }
+
+    #[test]
+    fn stopping_audio_silences_the_shared_output() {
+        let audio = audio::shared_state();
+        let app = App::with_audio_state(
+            vec![],
+            false,
+            CompatibilityProfile::OriginalChip8,
+            Arc::clone(&audio),
+        )
+        .expect("valid ROM");
+
+        audio.update(audio::AudioSnapshot {
+            pattern: [0xFF; 16],
+            pitch: 80,
+            active: true,
+        });
+        app.stop_audio();
 
         assert!(!audio.snapshot().active);
     }

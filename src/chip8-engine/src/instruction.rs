@@ -888,6 +888,21 @@ mod tests {
     }
 
     #[test]
+    fn xochip_wait_for_key_accepts_a_key_press_immediately() {
+        let mut c = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::XoChip,
+            ..Chip8Config::default()
+        });
+        c.load_rom(&[0xF0, 0x0A]).expect("ROM");
+
+        assert!(c.step().expect("start waiting").waiting_for_key);
+        c.set_key(5, true).expect("key");
+
+        assert!(!c.step().expect("key press").waiting_for_key);
+        assert_eq!(c.v[0], 5);
+    }
+
+    #[test]
     fn schip_1x_preserves_screen_contents_when_switching_resolution() {
         let mut c = Chip8::new(Chip8Config {
             profile: CompatibilityProfile::SuperChip10,
