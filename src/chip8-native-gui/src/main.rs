@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod debug;
 mod input;
 mod renderer;
@@ -44,6 +45,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut frame_texture = None;
     let mut app = App::new(rom, debug_mode, profile)?;
+    let _audio = match audio::AudioOutput::open(app.audio_state()) {
+        Ok(output) => Some(output),
+        Err(error) => {
+            eprintln!("audio disabled: {error}");
+            None
+        }
+    };
     let mut last_frame = Instant::now();
 
     event_loop.run(move |event, event_loop| {
@@ -139,7 +147,7 @@ fn parse_args(
         } else if arg == "--profile" {
             let value = args.next().ok_or_else(|| {
                 format!(
-                    "--profile requires a value (chip8, chip48, modern, superchip)\n\n{}",
+                    "--profile requires a value (chip8, chip48, modern, superchip, xochip)\n\n{}",
                     usage()
                 )
             })?;
@@ -148,6 +156,7 @@ fn parse_args(
                 "chip48" => CompatibilityProfile::Chip48,
                 "modern" => CompatibilityProfile::Modern,
                 "superchip" => CompatibilityProfile::SuperChip,
+                "xochip" => CompatibilityProfile::XoChip,
                 _ => {
                     return Err(format!(
                         "unknown profile: {}\n\n{}",
@@ -172,7 +181,7 @@ fn parse_args(
 }
 
 fn usage() -> &'static str {
-    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4 compatibility profile, Esc quit."
+    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
 }
 
 fn show_interface(
@@ -218,9 +227,12 @@ fn frame_image(framebuffer: &[u8], dimensions: (usize, usize)) -> egui::ColorIma
         egui::Color32::from_rgb(2, 4, 6),
     );
     for (output, input) in image.pixels.iter_mut().zip(framebuffer) {
-        if *input != 0 {
-            *output = egui::Color32::from_rgb(51, 255, 186);
-        }
+        *output = match input {
+            0 => egui::Color32::from_rgb(2, 4, 12),
+            1 => egui::Color32::from_rgb(51, 255, 186),
+            2 => egui::Color32::from_rgb(255, 64, 190),
+            _ => egui::Color32::WHITE,
+        };
     }
     image
 }
@@ -260,6 +272,9 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             }
             if ui.button("Super-CHIP (F4)").clicked() {
                 profile = Some(CompatibilityProfile::SuperChip);
+            }
+            if ui.button("XO-CHIP (F6)").clicked() {
+                profile = Some(CompatibilityProfile::XoChip);
             }
         });
     });
@@ -354,6 +369,7 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             CompatibilityProfile::Chip48 => winit::keyboard::KeyCode::F2,
             CompatibilityProfile::Modern => winit::keyboard::KeyCode::F3,
             CompatibilityProfile::SuperChip => winit::keyboard::KeyCode::F4,
+            CompatibilityProfile::XoChip => winit::keyboard::KeyCode::F6,
         };
         let _ = app.handle_command(key);
     }
@@ -450,11 +466,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_xochip_profile() {
+        let args = [
+            OsString::from("--profile"),
+            OsString::from("xochip"),
+            OsString::from("rom.ch8"),
+        ];
+        assert_eq!(
+            parse_args(args.into_iter()).expect("valid args").2,
+            CompatibilityProfile::XoChip
+        );
+    }
+
+    #[test]
     fn framebuffer_pixels_use_visible_debug_colors() {
         let mut framebuffer = vec![0; 64 * 32];
         framebuffer[1] = 1;
+        framebuffer[2] = 2;
+        framebuffer[3] = 3;
         let image = frame_image(&framebuffer, (64, 32));
-        assert_eq!(image.pixels[0], egui::Color32::from_rgb(2, 4, 6));
+        assert_eq!(image.pixels[0], egui::Color32::from_rgb(2, 4, 12));
         assert_eq!(image.pixels[1], egui::Color32::from_rgb(51, 255, 186));
+        assert_eq!(image.pixels[2], egui::Color32::from_rgb(255, 64, 190));
+        assert_eq!(image.pixels[3], egui::Color32::WHITE);
     }
 }

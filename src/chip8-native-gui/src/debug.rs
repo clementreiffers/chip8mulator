@@ -8,7 +8,7 @@ pub const TRACE_CAPACITY: usize = 1_000;
 #[derive(Debug, Clone)]
 pub struct TraceEntry {
     pub pc: u16,
-    pub opcode: u16,
+    pub opcode: u32,
     pub mnemonic: String,
     pub analysis_time: Duration,
     pub response_time: Option<Duration>,
@@ -16,7 +16,7 @@ pub struct TraceEntry {
 }
 
 impl TraceEntry {
-    pub fn new(pc: u16, opcode: u16, analysis_time: Duration) -> Self {
+    pub fn new(pc: u16, opcode: u32, analysis_time: Duration) -> Self {
         Self {
             pc,
             opcode,
@@ -78,7 +78,11 @@ impl DebugState {
 }
 
 #[must_use]
-pub fn disassemble(opcode: u16) -> String {
+pub fn disassemble(opcode: u32) -> String {
+    if opcode >> 16 == 0xF000 {
+        return format!("LD I, {:#06X}", opcode as u16);
+    }
+    let opcode = opcode as u16;
     let nnn = opcode & 0x0FFF;
     let x = (opcode >> 8) & 0x000F;
     let y = (opcode >> 4) & 0x000F;

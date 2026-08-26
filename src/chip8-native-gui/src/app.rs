@@ -1,8 +1,12 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use chip8_engine::{Chip8, Chip8Config, Chip8Error, CompatibilityProfile};
 use winit::keyboard::KeyCode;
 
+use crate::audio::{self, SharedAudio};
 use crate::debug::{DebugState, TraceEntry};
 
 const CPU_HZ: u32 = 700;
@@ -18,6 +22,7 @@ pub struct App {
     frame_dirty: bool,
     debug: Option<DebugState>,
     skip_breakpoint_once: Option<u16>,
+    audio: SharedAudio,
 }
 
 impl App {
@@ -39,6 +44,7 @@ impl App {
             frame_dirty: true,
             debug: debug_mode.then(DebugState::default),
             skip_breakpoint_once: None,
+            audio: audio::shared_state(),
         };
         app.restart()?;
         Ok(app)
@@ -64,6 +70,7 @@ impl App {
             KeyCode::F2 => self.set_profile(CompatibilityProfile::Chip48).is_ok(),
             KeyCode::F3 => self.set_profile(CompatibilityProfile::Modern).is_ok(),
             KeyCode::F4 => self.set_profile(CompatibilityProfile::SuperChip).is_ok(),
+            KeyCode::F6 => self.set_profile(CompatibilityProfile::XoChip).is_ok(),
             _ => false,
         }
     }
@@ -78,6 +85,7 @@ impl App {
 
         let elapsed = elapsed.min(MAX_ELAPSED);
         self.chip8.advance_timers(elapsed);
+        self.update_audio();
         self.cpu_remainder = self.cpu_remainder.saturating_add(elapsed);
         let cycle_period = Duration::from_nanos(1_000_000_000 / u64::from(CPU_HZ));
 
@@ -109,6 +117,9 @@ impl App {
     #[must_use]
     pub fn display_dimensions(&self) -> (usize, usize) {
         self.chip8.display_dimensions()
+    }
+    pub fn audio_state(&self) -> SharedAudio {
+        Arc::clone(&self.audio)
     }
 
     pub fn take_frame_dirty(&mut self) -> bool {
@@ -161,6 +172,7 @@ impl App {
         self.frame_dirty = true;
         self.halted = false;
         self.skip_breakpoint_once = None;
+        self.update_audio();
         if let Some(debug) = &mut self.debug {
             debug.clear_trace();
         }
@@ -197,15 +209,35 @@ impl App {
         }
         if let Ok(cycle) = &result {
             self.halted |= cycle.halted;
+            self.update_audio();
         }
         result
     }
 
-    fn opcode_at(&self, pc: u16) -> Option<u16> {
+    fn update_audio(&self) {
+        if let Ok(mut state) = self.audio.lock() {
+            *state = audio::AudioSnapshot {
+                pattern: *self.chip8.audio_pattern(),
+                pitch: self.chip8.audio_pitch(),
+                active: self.chip8.sound_active(),
+            };
+        }
+    }
+
+    fn opcode_at(&self, pc: u16) -> Option<u32> {
         let memory = self.chip8.memory();
         let high = *memory.get(usize::from(pc))?;
         let low = *memory.get(usize::from(pc.checked_add(1)?))?;
-        Some(u16::from_be_bytes([high, low]))
+        let opcode = u16::from_be_bytes([high, low]);
+        if opcode == 0xF000 && self.profile == CompatibilityProfile::XoChip {
+            let extra = u16::from_be_bytes([
+                *memory.get(usize::from(pc.checked_add(2)?))?,
+                *memory.get(usize::from(pc.checked_add(3)?))?,
+            ]);
+            Some((u32::from(opcode) << 16) | u32::from(extra))
+        } else {
+            Some(u32::from(opcode))
+        }
     }
 }
 
@@ -232,6 +264,8 @@ mod tests {
 
         assert!(app.handle_command(KeyCode::F4));
         assert_eq!(app.profile, CompatibilityProfile::SuperChip);
+        assert!(app.handle_command(KeyCode::F6));
+        assert_eq!(app.profile, CompatibilityProfile::XoChip);
     }
 
     #[test]

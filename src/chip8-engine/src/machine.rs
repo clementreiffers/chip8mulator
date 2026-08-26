@@ -5,7 +5,7 @@ use crate::{
     peripherals::{DisplayMode, Framebuffer},
 };
 
-pub(crate) const RAM_SIZE: usize = 4096;
+pub(crate) const RAM_SIZE: usize = 65_536;
 pub(crate) const PROGRAM_START: u16 = 0x200;
 pub(crate) const FONT_START: u16 = 0x50;
 const STACK_SIZE: usize = 16;
@@ -51,6 +51,7 @@ pub enum CompatibilityProfile {
     Chip48,
     Modern,
     SuperChip,
+    XoChip,
 }
 
 impl CompatibilityProfile {
@@ -61,16 +62,19 @@ impl CompatibilityProfile {
         matches!(self, Self::OriginalChip8)
     }
     pub(crate) const fn jump_uses_vx(self) -> bool {
-        matches!(self, Self::Chip48 | Self::SuperChip)
+        matches!(self, Self::Chip48 | Self::SuperChip | Self::XoChip)
     }
     pub(crate) const fn draw_wraps(self) -> bool {
-        !matches!(self, Self::Chip48 | Self::SuperChip)
+        !matches!(self, Self::Chip48 | Self::SuperChip | Self::XoChip)
     }
     pub(crate) const fn logic_clears_vf(self) -> bool {
         matches!(self, Self::OriginalChip8)
     }
     pub(crate) const fn supports_superchip(self) -> bool {
-        matches!(self, Self::SuperChip)
+        matches!(self, Self::SuperChip | Self::XoChip)
+    }
+    pub(crate) const fn supports_xochip(self) -> bool {
+        matches!(self, Self::XoChip)
     }
 }
 
@@ -144,7 +148,10 @@ pub struct Chip8 {
     pub(crate) sound_timer: u8,
     pub(crate) keys: [bool; 16],
     pub(crate) display: Framebuffer,
-    pub(crate) rpl: [u8; 8],
+    pub(crate) rpl: [u8; 16],
+    pub(crate) plane_mask: u8,
+    pub(crate) audio_pattern: [u8; 16],
+    pub(crate) audio_pitch: u8,
     pub(crate) config: Chip8Config,
     rng_state: u32,
     timer_remainder: Duration,
@@ -169,7 +176,10 @@ impl Chip8 {
             sound_timer: 0,
             keys: [false; 16],
             display: Framebuffer::default(),
-            rpl: [0; 8],
+            rpl: [0; 16],
+            plane_mask: 1,
+            audio_pattern: [0; 16],
+            audio_pitch: 64,
             config,
             rng_state: config.seed,
             timer_remainder: Duration::ZERO,
@@ -197,7 +207,10 @@ impl Chip8 {
         self.keys = [false; 16];
         self.display.clear();
         self.display.set_mode(DisplayMode::LowResolution);
-        self.rpl = [0; 8];
+        self.rpl = [0; 16];
+        self.plane_mask = 1;
+        self.audio_pattern = [0; 16];
+        self.audio_pitch = 64;
         self.rng_state = self.config.seed;
         self.timer_remainder = Duration::ZERO;
         Ok(())
@@ -245,6 +258,14 @@ impl Chip8 {
     #[must_use]
     pub fn sound_active(&self) -> bool {
         self.sound_timer != 0
+    }
+    #[must_use]
+    pub fn audio_pattern(&self) -> &[u8; 16] {
+        &self.audio_pattern
+    }
+    #[must_use]
+    pub fn audio_pitch(&self) -> u8 {
+        self.audio_pitch
     }
     #[must_use]
     pub fn registers(&self) -> &[u8; 16] {
@@ -313,6 +334,17 @@ mod tests {
             chip.load_rom(&rom),
             Err(Chip8Error::RomTooLarge { .. })
         ));
+    }
+    #[test]
+    fn xochip_can_load_roms_into_extended_ram() {
+        let mut chip = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::XoChip,
+            ..Chip8Config::default()
+        });
+        let rom = vec![0xAA; RAM_SIZE - usize::from(PROGRAM_START)];
+        chip.load_rom(&rom)
+            .expect("64 KiB ROM fits after program start");
+        assert_eq!(chip.memory[RAM_SIZE - 1], 0xAA);
     }
     #[test]
     fn timers_tick_at_60_hz() {

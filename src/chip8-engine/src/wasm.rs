@@ -67,4 +67,10 @@ impl WasmChip8 {
     pub fn sound_active(&self) -> bool {
         self.core.sound_active()
     }
+    pub fn audio_pattern(&self) -> Vec<u8> {
+        self.core.audio_pattern().to_vec()
+    }
+    pub fn audio_pitch(&self) -> u8 {
+        self.core.audio_pitch()
+    }
 }

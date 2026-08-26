@@ -17,6 +17,9 @@ vars:
   SUPERCHIP_ROM: '{{.ROM_DIR}}/superchip-scrolling.ch8'
   SUPERCHIP_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/8-scrolling.ch8
   SUPERCHIP_SHA256: 3f43507c45a949e5b014445853205dd1f36bb532cf25baa22209b7c300c596d7
+  XOCHIP_ROM: '{{.ROM_DIR}}/xochip-scrolling.ch8'
+  XOCHIP_URL: https://github.com/Timendus/chip8-test-suite/raw/main/bin/8-scrolling.ch8
+  XOCHIP_SHA256: 3f43507c45a949e5b014445853205dd1f36bb532cf25baa22209b7c300c596d7
 
 tasks:
   download-conformance-rom:
@@ -113,3 +116,22 @@ tasks:
     deps: [download-superchip-rom]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile superchip {{.ROOT_DIR}}/{{.SUPERCHIP_ROM}}
+
+  download-xochip-rom:
+    desc: Download and verify Timendus' XO-CHIP scrolling ROM
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.XOCHIP_ROM}} {{.XOCHIP_URL}}
+      - 'printf "%s  %s\\n" "{{.XOCHIP_SHA256}}" "{{.XOCHIP_ROM}}" | shasum -a 256 --check'
+
+  play-xochip:
+    desc: Launch the XO-CHIP scrolling ROM in native GUI
+    deps: [download-xochip-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.XOCHIP_ROM}}
+
+  debug-xochip:
+    desc: Launch the XO-CHIP scrolling ROM in native GUI debug mode
+    deps: [download-xochip-rom]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.XOCHIP_ROM}}
