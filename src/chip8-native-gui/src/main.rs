@@ -119,16 +119,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                         last_frame = now;
                         let upload_frame = app.take_frame_dirty();
                         let raw_input = egui_state.take_egui_input(window.as_ref());
+                        let mut debug_activated = false;
                         let output = egui_ctx.run(raw_input, |ctx| {
-                            show_interface(
+                            debug_activated = show_interface(
                                 ctx,
                                 &mut app,
                                 &mut frame_texture,
                                 upload_frame,
-                                debug_mode,
                                 &palette,
                             );
                         });
+                        if debug_activated {
+                            let _ = window.request_inner_size(LogicalSize::new(1_280.0, 800.0));
+                        }
                         egui_state.handle_platform_output(
                             window.as_ref(),
                             output.platform_output.clone(),
@@ -263,9 +266,8 @@ fn show_interface(
     app: &mut App,
     frame_texture: &mut Option<egui::TextureHandle>,
     upload_frame: bool,
-    debug_mode: bool,
     palette: &[egui::Color32; 16],
-) {
+) -> bool {
     let image = frame_image(app.framebuffer(), app.display_dimensions(), palette);
     if let Some(texture) = frame_texture
         && texture.size() == image.size
@@ -277,13 +279,24 @@ fn show_interface(
         *frame_texture =
             Some(ctx.load_texture("chip8-frame", image, egui::TextureOptions::NEAREST));
     }
-    if debug_mode {
+    if app.is_debug_enabled() {
         show_debug_interface(
             ctx,
             app,
             frame_texture.as_ref().expect("frame texture initialized"),
         );
+        false
     } else {
+        let mut debug_activated = false;
+        egui::TopBottomPanel::top("window_options").show(ctx, |ui| {
+            ui.menu_button("Options", |ui| {
+                if ui.button("Activer le mode debug").clicked() {
+                    app.enable_debug();
+                    debug_activated = true;
+                    ui.close_menu();
+                }
+            });
+        });
         egui::CentralPanel::default()
             .frame(egui::Frame::none().inner_margin(0.0))
             .show(ctx, |ui| {
@@ -293,6 +306,7 @@ fn show_interface(
                     None,
                 )
             });
+        debug_activated
     }
 }
 

@@ -134,6 +134,16 @@ impl App {
         self.debug.as_mut()
     }
 
+    #[must_use]
+    pub fn is_debug_enabled(&self) -> bool {
+        self.debug.is_some()
+    }
+
+    /// Enables tracing and breakpoints without changing the emulated machine state.
+    pub fn enable_debug(&mut self) {
+        self.debug.get_or_insert_with(DebugState::default);
+    }
+
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -280,6 +290,36 @@ mod tests {
         assert_eq!(app.chip8.program_counter(), 0x200);
         app.step_once().expect("step succeeds");
         assert_eq!(app.chip8.registers()[0], 1);
+    }
+
+    #[test]
+    fn enabling_debug_preserves_machine_state_and_starts_a_new_trace() {
+        let mut app = App::new(vec![0x60, 0x01], false, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
+        let pc = app.chip8.program_counter();
+        let registers = *app.chip8.registers();
+
+        app.enable_debug();
+
+        assert!(app.is_debug_enabled());
+        assert_eq!(app.chip8.program_counter(), pc);
+        assert_eq!(app.chip8.registers(), &registers);
+        assert!(app.debug().expect("debug enabled").trace().is_empty());
+
+        app.step_once().expect("step succeeds");
+        assert_eq!(app.debug().expect("debug enabled").trace().len(), 1);
+    }
+
+    #[test]
+    fn enabling_debug_twice_keeps_the_existing_trace() {
+        let mut app = App::new(vec![0x60, 0x01], false, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
+        app.enable_debug();
+        app.step_once().expect("step succeeds");
+
+        app.enable_debug();
+
+        assert_eq!(app.debug().expect("debug enabled").trace().len(), 1);
     }
 
     #[test]
