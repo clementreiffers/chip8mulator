@@ -9,13 +9,16 @@ use winit::keyboard::KeyCode;
 use crate::audio::{self, SharedAudio};
 use crate::debug::{DebugState, TraceEntry};
 
-const CPU_HZ: u32 = 700;
+pub const DEFAULT_CPU_HZ: u32 = 700;
+pub const MIN_CPU_HZ: u32 = 60;
+pub const MAX_CPU_HZ: u32 = 2_000;
 const MAX_ELAPSED: Duration = Duration::from_millis(100);
 
 pub struct App {
     chip8: Chip8,
     rom: Vec<u8>,
     profile: CompatibilityProfile,
+    cpu_hz: u32,
     cpu_remainder: Duration,
     paused: bool,
     halted: bool,
@@ -38,6 +41,7 @@ impl App {
             }),
             rom,
             profile,
+            cpu_hz: DEFAULT_CPU_HZ,
             cpu_remainder: Duration::ZERO,
             paused: false,
             halted: false,
@@ -87,7 +91,7 @@ impl App {
         self.chip8.advance_timers(elapsed);
         self.update_audio();
         self.cpu_remainder = self.cpu_remainder.saturating_add(elapsed);
-        let cycle_period = Duration::from_nanos(1_000_000_000 / u64::from(CPU_HZ));
+        let cycle_period = Duration::from_nanos(1_000_000_000 / u64::from(self.cpu_hz));
 
         while self.cpu_remainder >= cycle_period {
             let pc = self.chip8.program_counter();
@@ -118,6 +122,21 @@ impl App {
     pub fn display_dimensions(&self) -> (usize, usize) {
         self.chip8.display_dimensions()
     }
+
+    #[must_use]
+    pub fn cpu_hz(&self) -> u32 {
+        self.cpu_hz
+    }
+
+    pub fn set_cpu_hz(&mut self, cpu_hz: u32) {
+        self.cpu_hz = cpu_hz.clamp(MIN_CPU_HZ, MAX_CPU_HZ);
+    }
+
+    #[must_use]
+    pub fn memory_size(&self) -> usize {
+        self.chip8.memory().len()
+    }
+
     pub fn audio_state(&self) -> SharedAudio {
         Arc::clone(&self.audio)
     }
@@ -276,6 +295,29 @@ mod tests {
         assert_eq!(app.profile, CompatibilityProfile::SuperChip);
         assert!(app.handle_command(KeyCode::F6));
         assert_eq!(app.profile, CompatibilityProfile::XoChip);
+    }
+
+    #[test]
+    fn cpu_frequency_is_configurable_within_safe_bounds() {
+        let mut app = App::new(vec![0x60, 0x01], false, CompatibilityProfile::OriginalChip8)
+            .expect("valid ROM");
+        assert_eq!(app.cpu_hz(), DEFAULT_CPU_HZ);
+
+        app.set_cpu_hz(1_200);
+        assert_eq!(app.cpu_hz(), 1_200);
+        app.advance(Duration::from_millis(1)).expect("valid ROM");
+        assert_eq!(app.chip8.registers()[0], 1);
+
+        app.set_cpu_hz(1);
+        assert_eq!(app.cpu_hz(), MIN_CPU_HZ);
+        app.set_cpu_hz(u32::MAX);
+        assert_eq!(app.cpu_hz(), MAX_CPU_HZ);
+    }
+
+    #[test]
+    fn memory_size_matches_the_allocated_ram() {
+        let app = App::new(vec![], false, CompatibilityProfile::OriginalChip8).expect("valid ROM");
+        assert_eq!(app.memory_size(), 65_536);
     }
 
     #[test]

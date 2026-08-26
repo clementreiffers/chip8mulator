@@ -6,7 +6,7 @@ mod renderer;
 
 use std::{error::Error, ffi::OsString, path::PathBuf, sync::Arc, time::Instant};
 
-use app::App;
+use app::{App, MAX_CPU_HZ, MIN_CPU_HZ};
 use chip8_engine::CompatibilityProfile;
 use input::key_to_chip8;
 use renderer::Renderer;
@@ -38,7 +38,7 @@ const DEFAULT_PALETTE: [egui::Color32; 16] = [
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (rom_path, debug_mode, profile, palette) = parse_args(std::env::args_os().skip(1))?;
+    let (rom_path, debug_mode, profile, mut palette) = parse_args(std::env::args_os().skip(1))?;
     let rom = std::fs::read(&rom_path)?;
     let title = format!("CHIP-8 — {}", rom_path.display());
     let event_loop = EventLoop::new()?;
@@ -63,6 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None,
     );
     let mut frame_texture = None;
+    let mut settings_open = false;
     let mut app = App::new(rom, debug_mode, profile)?;
     let _audio = match audio::AudioOutput::open(app.audio_state()) {
         Ok(output) => Some(output),
@@ -126,7 +127,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 &mut app,
                                 &mut frame_texture,
                                 upload_frame,
-                                &palette,
+                                &mut palette,
+                                &mut settings_open,
                             );
                         });
                         if debug_activated {
@@ -266,13 +268,15 @@ fn show_interface(
     app: &mut App,
     frame_texture: &mut Option<egui::TextureHandle>,
     upload_frame: bool,
-    palette: &[egui::Color32; 16],
+    palette: &mut [egui::Color32; 16],
+    settings_open: &mut bool,
 ) -> bool {
+    let palette_changed = show_settings_window(ctx, app, palette, settings_open);
     let image = frame_image(app.framebuffer(), app.display_dimensions(), palette);
     if let Some(texture) = frame_texture
         && texture.size() == image.size
     {
-        if upload_frame {
+        if texture_needs_update(upload_frame, palette_changed) {
             texture.set(image, egui::TextureOptions::NEAREST);
         }
     } else {
@@ -284,12 +288,17 @@ fn show_interface(
             ctx,
             app,
             frame_texture.as_ref().expect("frame texture initialized"),
+            settings_open,
         );
         false
     } else {
         let mut debug_activated = false;
         egui::TopBottomPanel::top("window_options").show(ctx, |ui| {
             ui.menu_button("Options", |ui| {
+                if ui.button("Paramètres…").clicked() {
+                    *settings_open = true;
+                    ui.close_menu();
+                }
                 if ui.button("Activer le mode debug").clicked() {
                     app.enable_debug();
                     debug_activated = true;
@@ -310,6 +319,52 @@ fn show_interface(
     }
 }
 
+fn show_settings_window(
+    ctx: &egui::Context,
+    app: &mut App,
+    palette: &mut [egui::Color32; 16],
+    open: &mut bool,
+) -> bool {
+    let mut palette_changed = false;
+    egui::Window::new("Paramètres").open(open).show(ctx, |ui| {
+        ui.heading("Émulation");
+        let mut cpu_hz = app.cpu_hz();
+        if ui
+            .add(
+                egui::DragValue::new(&mut cpu_hz)
+                    .range(MIN_CPU_HZ..=MAX_CPU_HZ)
+                    .suffix(" cycles/s"),
+            )
+            .changed()
+        {
+            app.set_cpu_hz(cpu_hz);
+        }
+        ui.separator();
+        ui.heading("Mémoire");
+        ui.label(format!(
+            "Mémoire allouée : {} Kio ({} octets)",
+            app.memory_size() / 1_024,
+            app.memory_size()
+        ));
+        ui.separator();
+        ui.heading("Palette");
+        egui::Grid::new("palette_editor")
+            .num_columns(2)
+            .show(ui, |ui| {
+                for (index, color) in palette.iter_mut().enumerate() {
+                    ui.label(format!("Couleur {index}"));
+                    palette_changed |= ui.color_edit_button_srgba(color).changed();
+                    ui.end_row();
+                }
+            });
+    });
+    palette_changed
+}
+
+const fn texture_needs_update(frame_changed: bool, palette_changed: bool) -> bool {
+    frame_changed || palette_changed
+}
+
 fn frame_image(
     framebuffer: &[u8],
     dimensions: (usize, usize),
@@ -325,7 +380,12 @@ fn frame_image(
     image
 }
 
-fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::TextureHandle) {
+fn show_debug_interface(
+    ctx: &egui::Context,
+    app: &mut App,
+    texture: &egui::TextureHandle,
+    settings_open: &mut bool,
+) {
     let mut toggle_pause = false;
     let mut step = false;
     let mut restart = false;
@@ -347,6 +407,9 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             }
             if ui.button("Redémarrer (F5)").clicked() {
                 restart = true;
+            }
+            if ui.button("Paramètres…").clicked() {
+                *settings_open = true;
             }
             ui.separator();
             if ui.button("CHIP-8 (F1)").clicked() {
@@ -624,5 +687,22 @@ mod tests {
         assert_eq!(image.pixels[2], egui::Color32::from_rgb(7, 8, 9));
         assert_eq!(image.pixels[3], egui::Color32::from_rgb(10, 11, 12));
         assert_eq!(image.pixels[4], DEFAULT_PALETTE[4]);
+    }
+
+    #[test]
+    fn framebuffer_uses_modified_extended_palette_colours() {
+        let mut palette = DEFAULT_PALETTE;
+        palette[12] = egui::Color32::from_rgb(12, 34, 56);
+
+        let image = frame_image(&[12], (1, 1), &palette);
+
+        assert_eq!(image.pixels[0], egui::Color32::from_rgb(12, 34, 56));
+    }
+
+    #[test]
+    fn palette_changes_refresh_the_existing_frame_texture() {
+        assert!(texture_needs_update(false, true));
+        assert!(texture_needs_update(true, false));
+        assert!(!texture_needs_update(false, false));
     }
 }
