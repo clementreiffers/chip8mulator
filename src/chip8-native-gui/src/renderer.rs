@@ -11,6 +11,14 @@ pub struct Renderer {
     egui_renderer: egui_wgpu::Renderer,
 }
 
+pub enum RenderError {
+    Lost,
+    Outdated,
+    Timeout,
+    Occluded,
+    Validation,
+}
+
 impl Renderer {
     pub async fn new(window: Arc<Window>) -> Result<Self, Box<dyn std::error::Error>> {
         let size = window.inner_size();
@@ -23,16 +31,14 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or("no compatible GPU adapter found")?;
+            .map_err(|error| format!("no compatible GPU adapter found: {error}"))?;
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("CHIP-8 GPU device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("CHIP-8 GPU device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                ..Default::default()
+            })
             .await?;
         let limits = device.limits();
         let capabilities = surface.get_capabilities(&adapter);
@@ -53,7 +59,8 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        let egui_renderer = egui_wgpu::Renderer::new(&device, format, None, 1);
+        let egui_renderer =
+            egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
         Ok(Self {
             surface,
             device,
@@ -84,7 +91,7 @@ impl Renderer {
         output: egui::FullOutput,
         paint_jobs: &[egui::ClippedPrimitive],
         pixels_per_point: f32,
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<(), RenderError> {
         for (id, delta) in &output.textures_delta.set {
             self.egui_renderer
                 .update_texture(&self.device, &self.queue, *id, delta);
@@ -93,7 +100,15 @@ impl Renderer {
             size_in_pixels: [self.size.width, self.size.height],
             pixels_per_point,
         };
-        let frame = self.surface.get_current_texture()?;
+        let (frame, suboptimal) = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+            wgpu::CurrentSurfaceTexture::Timeout => return Err(RenderError::Timeout),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err(RenderError::Occluded),
+            wgpu::CurrentSurfaceTexture::Outdated => return Err(RenderError::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost => return Err(RenderError::Lost),
+            wgpu::CurrentSurfaceTexture::Validation => return Err(RenderError::Validation),
+        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -110,10 +125,11 @@ impl Renderer {
             &screen,
         );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("CHIP-8 render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -128,11 +144,16 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
-            self.egui_renderer.render(&mut pass, paint_jobs, &screen);
+            self.egui_renderer
+                .render(&mut pass.forget_lifetime(), paint_jobs, &screen);
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
+        if suboptimal {
+            self.reconfigure();
+        }
         for id in &output.textures_delta.free {
             self.egui_renderer.free_texture(id);
         }

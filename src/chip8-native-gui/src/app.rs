@@ -244,13 +244,11 @@ impl App {
     }
 
     fn update_audio(&self) {
-        if let Ok(mut state) = self.audio.lock() {
-            *state = audio::AudioSnapshot {
-                pattern: *self.chip8.audio_pattern(),
-                pitch: self.chip8.audio_pitch(),
-                active: self.chip8.sound_active(),
-            };
-        }
+        self.audio.update(audio::AudioSnapshot {
+            pattern: *self.chip8.audio_pattern(),
+            pitch: self.chip8.audio_pitch(),
+            active: self.chip8.sound_active(),
+        });
     }
 
     fn opcode_at(&self, pc: u16) -> Option<u32> {

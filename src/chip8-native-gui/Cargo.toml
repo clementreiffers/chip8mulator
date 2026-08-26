@@ -4,18 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
- bollard = "0.18"
-bytemuck = { version = "1", features = ["derive"] }
+bollard = "0.21.1"
+bytemuck = { version = "1.25.2", features = ["derive"] }
 chip8-engine = { path = "../chip8-engine" }
-cpal = "0.15"
-egui = "0.28.1"
-egui-wgpu = "0.28.1"
-egui-winit = "0.28.1"
-futures-util = "0.3"
-pollster = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-tempfile = "3"
-tokio = { version = "1", features = ["rt-multi-thread"] }
-wgpu = "0.20"
-winit = "0.29"
+cpal = "0.18.2"
+# 0.36 requires Rust 1.95; 0.35 is the newest release compatible with Rust 1.93.
+egui = "0.35.0"
+egui-wgpu = "0.35.0"
+egui-winit = "0.35.0"
+futures-util = "0.3.34"
+pollster = "1.0.1"
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
+wgpu = "29.0.1"
+winit = "0.30.13"

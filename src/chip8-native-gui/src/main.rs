@@ -17,7 +17,7 @@ use winit::{
     event::{ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::PhysicalKey,
-    window::WindowBuilder,
+    window::Window,
 };
 
 const DEFAULT_PALETTE: [egui::Color32; 16] = [
@@ -44,6 +44,7 @@ struct LibraryView {
     open: bool,
 }
 
+#[allow(deprecated)] // EventLoop::run is retained until this host adopts winit's ApplicationHandler API.
 fn main() -> Result<(), Box<dyn Error>> {
     let (rom_path, debug_mode, profile, mut palette) = parse_args(std::env::args_os().skip(1))?;
     let library_open = rom_path.is_none();
@@ -56,15 +57,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let event_loop = EventLoop::new()?;
     let window = Arc::new(
-        WindowBuilder::new()
-            .with_title(title)
-            .with_inner_size(if debug_mode {
-                LogicalSize::new(1_280.0, 800.0)
-            } else {
-                LogicalSize::new(960.0, 480.0)
-            })
-            .with_min_inner_size(LogicalSize::new(320.0, 160.0))
-            .build(&event_loop)?,
+        event_loop.create_window(
+            Window::default_attributes()
+                .with_title(title)
+                .with_inner_size(if debug_mode {
+                    LogicalSize::new(1_280.0, 800.0)
+                } else {
+                    LogicalSize::new(960.0, 480.0)
+                })
+                .with_min_inner_size(LogicalSize::new(320.0, 160.0)),
+        )?,
     );
     let mut renderer = pollster::block_on(Renderer::new(Arc::clone(&window)))?;
     let egui_ctx = egui::Context::default();
@@ -73,6 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         egui::ViewportId::ROOT,
         window.as_ref(),
         Some(window.scale_factor() as f32),
+        None,
         None,
     );
     let mut frame_texture = None;
@@ -162,9 +165,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let upload_frame = app.take_frame_dirty();
                         let raw_input = egui_state.take_egui_input(window.as_ref());
                         let mut debug_activated = false;
-                        let output = egui_ctx.run(raw_input, |ctx| {
+                        let output = egui_ctx.run_ui(raw_input, |ui| {
                             debug_activated = show_interface(
-                                ctx,
+                                ui,
                                 &mut app,
                                 &mut frame_texture,
                                 upload_frame,
@@ -188,11 +191,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                             egui_ctx.tessellate(output.shapes.clone(), pixels_per_point);
                         match renderer.render(output, &paint_jobs, pixels_per_point) {
                             Ok(()) => app.mark_frame_presented(),
-                            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            Err(renderer::RenderError::Lost | renderer::RenderError::Outdated) => {
                                 renderer.reconfigure()
                             }
-                            Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
-                            Err(wgpu::SurfaceError::Timeout) => {}
+                            Err(
+                                renderer::RenderError::Timeout
+                                | renderer::RenderError::Occluded
+                                | renderer::RenderError::Validation,
+                            ) => {}
                         }
                     }
                     _ => {}
@@ -319,7 +325,7 @@ fn usage() -> &'static str {
 }
 
 fn show_interface(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     app: &mut App,
     frame_texture: &mut Option<egui::TextureHandle>,
     upload_frame: bool,
@@ -328,10 +334,10 @@ fn show_interface(
     library_view: &mut LibraryView,
 ) -> bool {
     if library_view.open {
-        show_library(ctx, &mut library_view.library);
+        show_library(ui, &mut library_view.library);
         return false;
     }
-    let palette_changed = show_settings_window(ctx, app, palette, settings_open);
+    let palette_changed = show_settings_window(ui, app, palette, settings_open);
     let image = frame_image(app.framebuffer(), app.display_dimensions(), palette);
     if let Some(texture) = frame_texture
         && texture.size() == image.size
@@ -340,12 +346,15 @@ fn show_interface(
             texture.set(image, egui::TextureOptions::NEAREST);
         }
     } else {
-        *frame_texture =
-            Some(ctx.load_texture("chip8-frame", image, egui::TextureOptions::NEAREST));
+        *frame_texture = Some(ui.ctx().load_texture(
+            "chip8-frame",
+            image,
+            egui::TextureOptions::NEAREST,
+        ));
     }
     if app.is_debug_enabled() {
         show_debug_interface(
-            ctx,
+            ui,
             app,
             frame_texture.as_ref().expect("frame texture initialized"),
             settings_open,
@@ -354,7 +363,7 @@ fn show_interface(
         false
     } else {
         let mut debug_activated = false;
-        egui::TopBottomPanel::top("window_options").show(ctx, |ui| {
+        egui::Panel::top("window_options").show(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Bibliothèque").clicked() {
                     library_view.open = true;
@@ -362,19 +371,19 @@ fn show_interface(
                 ui.menu_button("Options", |ui| {
                     if ui.button("Paramètres…").clicked() {
                         *settings_open = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Activer le mode debug").clicked() {
                         app.enable_debug();
                         debug_activated = true;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
         });
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().inner_margin(0.0))
-            .show(ctx, |ui| {
+            .frame(egui::Frame::NONE.inner_margin(0.0))
+            .show(ui, |ui| {
                 show_screen(
                     ui,
                     frame_texture.as_ref().expect("frame texture initialized"),
@@ -385,8 +394,8 @@ fn show_interface(
     }
 }
 
-fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+fn show_library(ui: &mut egui::Ui, library: &mut RomLibrary) {
+    egui::CentralPanel::default().show(ui, |ui| {
         ui.heading("Bibliothèque de jeux CHIP-8");
         ui.label("Choisissez un jeu : il sera téléchargé puis lancé automatiquement.");
         ui.add_space(8.0);
@@ -491,13 +500,13 @@ const fn profile_filter_label(profile: Option<CompatibilityProfile>) -> &'static
 }
 
 fn show_settings_window(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     app: &mut App,
     palette: &mut [egui::Color32; 16],
     open: &mut bool,
 ) -> bool {
     let mut palette_changed = false;
-    egui::Window::new("Paramètres").open(open).show(ctx, |ui| {
+    egui::Window::new("Paramètres").open(open).show(ui, |ui| {
         ui.heading("Émulation");
         let mut cpu_hz = app.cpu_hz();
         if ui
@@ -541,7 +550,10 @@ fn frame_image(
     dimensions: (usize, usize),
     palette: &[egui::Color32; 16],
 ) -> egui::ColorImage {
-    let mut image = egui::ColorImage::new([dimensions.0, dimensions.1], palette[0]);
+    let mut image = egui::ColorImage::new(
+        [dimensions.0, dimensions.1],
+        vec![palette[0]; dimensions.0 * dimensions.1],
+    );
     for (output, input) in image.pixels.iter_mut().zip(framebuffer) {
         *output = palette
             .get(usize::from(*input))
@@ -552,7 +564,7 @@ fn frame_image(
 }
 
 fn show_debug_interface(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     app: &mut App,
     texture: &egui::TextureHandle,
     settings_open: &mut bool,
@@ -562,7 +574,7 @@ fn show_debug_interface(
     let mut step = false;
     let mut restart = false;
     let mut profile = None;
-    egui::TopBottomPanel::top("debug_controls").show(ctx, |ui| {
+    egui::Panel::top("debug_controls").show(ui, |ui| {
         ui.horizontal(|ui| {
             if ui.button("Bibliothèque").clicked() {
                 *library_open = true;
@@ -604,9 +616,9 @@ fn show_debug_interface(
             }
         });
     });
-    egui::SidePanel::right("debug_metrics")
-        .min_width(260.0)
-        .show(ctx, |ui| {
+    egui::Panel::right("debug_metrics")
+        .min_size(260.0)
+        .show(ui, |ui| {
             ui.heading("Performance");
             ui.label(if app.is_paused() {
                 "État : en pause"
@@ -636,7 +648,7 @@ fn show_debug_interface(
                 app.debug_mut().expect("debug enabled").clear_breakpoints();
             }
         });
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         show_screen(ui, texture, Some(640.0));
         ui.separator();
         ui.heading("Instructions exécutées");
@@ -712,7 +724,12 @@ fn draw_chart(ui: &mut egui::Ui, entries: &[&debug::TraceEntry]) {
         egui::Sense::hover(),
     );
     let painter = ui.painter_at(rect);
-    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::DARK_GRAY));
+    painter.rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, egui::Color32::DARK_GRAY),
+        egui::StrokeKind::Inside,
+    );
     let maximum = entries
         .iter()
         .map(|entry| entry.analysis_time.as_secs_f32())

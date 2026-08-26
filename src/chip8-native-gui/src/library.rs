@@ -2,12 +2,11 @@ use std::{collections::HashMap, fs, path::Path, sync::mpsc, thread};
 
 use bollard::{
     Docker,
-    container::{
-        Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
-        WaitContainerOptions,
+    models::{ContainerCreateBody, HostConfig, Mount, MountType},
+    query_parameters::{
+        CreateContainerOptions, CreateImageOptions, LogsOptions, RemoveContainerOptions,
+        StartContainerOptions, WaitContainerOptions,
     },
-    image::CreateImageOptions,
-    models::{HostConfig, Mount, MountTypeEnum},
 };
 use chip8_engine::CompatibilityProfile;
 use futures_util::StreamExt;
@@ -354,8 +353,8 @@ async fn compile_in_docker(
     let created = docker
         .create_container(
             Some(CreateContainerOptions {
-                name: "",
-                platform: None,
+                name: Some(String::new()),
+                platform: String::new(),
             }),
             config,
         )
@@ -402,7 +401,7 @@ async fn ensure_image(docker: &Docker, sender: &mpsc::Sender<Update>) -> Result<
     );
     let mut pull = docker.create_image(
         Some(CreateImageOptions {
-            from_image: OCTO_IMAGE,
+            from_image: Some(OCTO_IMAGE.into()),
             ..Default::default()
         }),
         None,
@@ -418,15 +417,15 @@ async fn ensure_image(docker: &Docker, sender: &mpsc::Sender<Update>) -> Result<
     Ok(())
 }
 
-fn compiler_container_config(workspace: &Path) -> Config<String> {
-    Config {
+fn compiler_container_config(workspace: &Path) -> ContainerCreateBody {
+    ContainerCreateBody {
         image: Some(OCTO_IMAGE.into()),
         cmd: Some(vec!["sh".into(), "-ec".into(), COMPILER_COMMAND.into()]),
         host_config: Some(HostConfig {
             mounts: Some(vec![Mount {
                 target: Some("/workspace".into()),
                 source: Some(workspace.display().to_string()),
-                typ: Some(MountTypeEnum::BIND),
+                typ: Some(MountType::BIND),
                 read_only: Some(false),
                 ..Default::default()
             }]),
@@ -442,7 +441,7 @@ async fn run_container(
     sender: &mpsc::Sender<Update>,
 ) -> Result<(), String> {
     docker
-        .start_container(container_id, None::<StartContainerOptions<String>>)
+        .start_container(container_id, None::<StartContainerOptions>)
         .await
         .map_err(|error| format!("démarrage du conteneur Docker : {error}"))?;
     let log_docker = docker.clone();
@@ -451,7 +450,7 @@ async fn run_container(
     let log_task = tokio::spawn(async move {
         let mut logs = log_docker.logs(
             &log_container_id,
-            Some(LogsOptions::<String> {
+            Some(LogsOptions {
                 follow: true,
                 stdout: true,
                 stderr: true,
@@ -466,7 +465,7 @@ async fn run_container(
         }
     });
     let result = docker
-        .wait_container(container_id, None::<WaitContainerOptions<String>>)
+        .wait_container(container_id, None::<WaitContainerOptions>)
         .next()
         .await
         .ok_or_else(|| "le conteneur Docker n'a retourné aucun résultat".to_owned())
