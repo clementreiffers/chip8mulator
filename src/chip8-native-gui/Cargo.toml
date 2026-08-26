@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ bollard = "0.18"
 bytemuck = { version = "1", features = ["derive"] }
 chip8-engine = { path = "../chip8-engine" }
 cpal = "0.15"
 egui = "0.28.1"
 egui-wgpu = "0.28.1"
 egui-winit = "0.28.1"
+futures-util = "0.3"
 pollster = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 wgpu = "0.20"
 winit = "0.29"

@@ -122,7 +122,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     WindowEvent::RedrawRequested => {
                         let now = Instant::now();
-                        if let Some(Update::Downloaded { game, bytes }) =
+                        if let Some(Update::LoadedGame { game, bytes }) =
                             library_view.library.receive_updates()
                         {
                             match App::new(bytes, debug_mode, game.profile) {
@@ -417,6 +417,20 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
                 });
         });
         ui.label(&library.status);
+        if !library.logs.is_empty() {
+            egui::CollapsingHeader::new("Afficher les logs")
+                .default_open(false)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for log in &library.logs {
+                                ui.monospace(log);
+                            }
+                        });
+                });
+        }
         ui.separator();
         let filter = library.filter.to_lowercase();
         let profile_filter = library.profile_filter;
@@ -436,10 +450,21 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
             .show(ui, |ui| {
                 for game in games {
                     ui.group(|ui| {
-                        if ui.button(&game.name).clicked() {
-                            library.download(game.clone());
+                        let button_label = match game.launch_kind {
+                            library::LaunchKind::BinaryRom => game.name.clone(),
+                            library::LaunchKind::OctoSource => "Compiler et jouer".into(),
+                        };
+                        if ui.button(button_label).clicked() {
+                            library.launch(game.clone());
                         }
                         ui.small(format!("Source : {}", game.source));
+                        if game.launch_kind == library::LaunchKind::OctoSource {
+                            ui.colored_label(
+                                egui::Color32::YELLOW,
+                                "⚠ Compilation Docker requise — Docker doit être installé et démarré.",
+                            );
+                            ui.small(&game.name);
+                        }
                         ui.small(format!(
                             "Architecture : {}",
                             profile_filter_label(Some(game.profile))
