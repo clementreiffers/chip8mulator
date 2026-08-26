@@ -2,6 +2,7 @@ mod app;
 mod audio;
 mod debug;
 mod input;
+mod library;
 mod renderer;
 
 use std::{error::Error, ffi::OsString, path::PathBuf, sync::Arc, time::Instant};
@@ -9,6 +10,7 @@ use std::{error::Error, ffi::OsString, path::PathBuf, sync::Arc, time::Instant};
 use app::{App, MAX_CPU_HZ, MIN_CPU_HZ};
 use chip8_engine::CompatibilityProfile;
 use input::key_to_chip8;
+use library::{RomLibrary, Update};
 use renderer::Renderer;
 use winit::{
     dpi::LogicalSize,
@@ -37,10 +39,21 @@ const DEFAULT_PALETTE: [egui::Color32; 16] = [
     egui::Color32::from_rgb(230, 236, 255),
 ];
 
+struct LibraryView {
+    library: RomLibrary,
+    open: bool,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let (rom_path, debug_mode, profile, mut palette) = parse_args(std::env::args_os().skip(1))?;
-    let rom = std::fs::read(&rom_path)?;
-    let title = format!("CHIP-8 — {}", rom_path.display());
+    let library_open = rom_path.is_none();
+    let rom = rom_path
+        .as_ref()
+        .map_or_else(|| Ok(vec![0, 0]), std::fs::read)?;
+    let title = rom_path.as_ref().map_or_else(
+        || "CHIP-8 — Bibliothèque".to_owned(),
+        |path| format!("CHIP-8 — {}", path.display()),
+    );
     let event_loop = EventLoop::new()?;
     let window = Arc::new(
         WindowBuilder::new()
@@ -65,6 +78,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut frame_texture = None;
     let mut settings_open = false;
     let mut app = App::new(rom, debug_mode, profile)?;
+    let mut library_view = LibraryView {
+        library: RomLibrary::load(),
+        open: library_open,
+    };
     let _audio = match audio::AudioOutput::open(app.audio_state()) {
         Ok(output) => Some(output),
         Err(error) => {
@@ -105,12 +122,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     WindowEvent::RedrawRequested => {
                         let now = Instant::now();
-                        match app.advance(now.duration_since(last_frame)) {
-                            Ok(true) => {
+                        if let Some(Update::Downloaded { game, bytes }) =
+                            library_view.library.receive_updates()
+                        {
+                            match App::new(bytes, debug_mode, game.profile) {
+                                Ok(loaded_app) => {
+                                    app = loaded_app;
+                                    window.set_title(&format!("CHIP-8 — {}", game.name));
+                                    library_view.open = false;
+                                }
+                                Err(error) => {
+                                    library_view.library.status =
+                                        format!("Impossible de charger {} : {error}", game.name)
+                                }
+                            }
+                        }
+                        let execution = (!library_view.open)
+                            .then(|| app.advance(now.duration_since(last_frame)));
+                        match execution.transpose() {
+                            Ok(Some(true)) => {
                                 event_loop.exit();
                                 return;
                             }
-                            Ok(false) => {}
+                            Ok(Some(false) | None) => {}
                             Err(error) => {
                                 eprintln!("emulation error: {error}");
                                 event_loop.exit();
@@ -129,6 +163,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 upload_frame,
                                 &mut palette,
                                 &mut settings_open,
+                                &mut library_view,
                             );
                         });
                         if debug_activated {
@@ -162,7 +197,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_args(
     mut args: impl Iterator<Item = OsString>,
-) -> Result<(PathBuf, bool, CompatibilityProfile, [egui::Color32; 16]), String> {
+) -> Result<
+    (
+        Option<PathBuf>,
+        bool,
+        CompatibilityProfile,
+        [egui::Color32; 16],
+    ),
+    String,
+> {
     let mut rom_path = None;
     let mut debug_mode = false;
     let mut profile = CompatibilityProfile::OriginalChip8;
@@ -209,9 +252,7 @@ fn parse_args(
             return Err(format!("only one ROM can be provided\n\n{}", usage()));
         }
     }
-    rom_path
-        .map(|path| (path, debug_mode, profile, palette))
-        .ok_or_else(|| usage().to_owned())
+    Ok((rom_path, debug_mode, profile, palette))
 }
 
 fn parse_palette(value: &OsString) -> Result<[egui::Color32; 16], String> {
@@ -260,7 +301,7 @@ fn parse_color(value: &str) -> Result<egui::Color32, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] [--palette #RRGGBB,#RRGGBB,#RRGGBB,#RRGGBB] <rom.ch8>\n\nControls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
+    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] [--palette #RRGGBB,#RRGGBB,#RRGGBB,#RRGGBB] [rom.ch8]\n\nWithout a ROM, the game library opens. Controls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
 }
 
 fn show_interface(
@@ -270,7 +311,12 @@ fn show_interface(
     upload_frame: bool,
     palette: &mut [egui::Color32; 16],
     settings_open: &mut bool,
+    library_view: &mut LibraryView,
 ) -> bool {
+    if library_view.open {
+        show_library(ctx, &mut library_view.library);
+        return false;
+    }
     let palette_changed = show_settings_window(ctx, app, palette, settings_open);
     let image = frame_image(app.framebuffer(), app.display_dimensions(), palette);
     if let Some(texture) = frame_texture
@@ -317,6 +363,43 @@ fn show_interface(
             });
         debug_activated
     }
+}
+
+fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.heading("Bibliothèque de jeux CHIP-8");
+        ui.label("Choisissez un jeu : il sera téléchargé puis lancé automatiquement.");
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label("Rechercher");
+            ui.text_edit_singleline(&mut library.filter);
+        });
+        ui.label(&library.status);
+        ui.separator();
+        let filter = library.filter.to_lowercase();
+        let games: Vec<_> = library
+            .games
+            .iter()
+            .filter(|game| {
+                filter.is_empty()
+                    || game.name.to_lowercase().contains(&filter)
+                    || game.source.to_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for game in games {
+                    ui.group(|ui| {
+                        if ui.button(&game.name).clicked() {
+                            library.download(game.clone());
+                        }
+                        ui.small(format!("Source : {}", game.source));
+                    });
+                }
+            });
+    });
 }
 
 fn show_settings_window(
@@ -578,12 +661,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_rom_opens_the_library() {
+        let (rom, debug, profile, palette) = parse_args(std::iter::empty()).expect("valid args");
+        assert_eq!(rom, None);
+        assert!(!debug);
+        assert_eq!(profile, CompatibilityProfile::OriginalChip8);
+        assert_eq!(palette, DEFAULT_PALETTE);
+    }
+
+    #[test]
     fn parses_debug_flag_in_any_position() {
         let args = [OsString::from("--debug-mode"), OsString::from("rom.ch8")];
         assert_eq!(
             parse_args(args.into_iter()).expect("valid args"),
             (
-                PathBuf::from("rom.ch8"),
+                Some(PathBuf::from("rom.ch8")),
                 true,
                 CompatibilityProfile::OriginalChip8,
                 DEFAULT_PALETTE
@@ -593,7 +685,7 @@ mod tests {
         assert_eq!(
             parse_args(args.into_iter()).expect("valid args"),
             (
-                PathBuf::from("rom.ch8"),
+                Some(PathBuf::from("rom.ch8")),
                 true,
                 CompatibilityProfile::OriginalChip8,
                 DEFAULT_PALETTE
@@ -611,7 +703,7 @@ mod tests {
         assert_eq!(
             parse_args(args.into_iter()).expect("valid args"),
             (
-                PathBuf::from("rom.ch8"),
+                Some(PathBuf::from("rom.ch8")),
                 false,
                 CompatibilityProfile::SuperChip,
                 DEFAULT_PALETTE

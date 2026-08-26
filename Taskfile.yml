@@ -70,6 +70,11 @@ tasks:
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- {{.ROOT_DIR}}/{{.HELLOWORLD_ROM}}
 
+  play-library:
+    desc: Launch the native GUI game library
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml
+
   debug-helloworld:
     desc: Launch hello-world ROM in native GUI debug mode
     deps: [download-helloworld-rom]
