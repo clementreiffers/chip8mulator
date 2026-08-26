@@ -1,4 +1,4 @@
-use std::{sync::mpsc, thread};
+use std::{collections::HashMap, sync::mpsc, thread};
 
 use chip8_engine::CompatibilityProfile;
 use serde::Deserialize;
@@ -12,6 +12,7 @@ struct Source {
     repository: &'static str,
     revision: &'static str,
     path_prefix: &'static str,
+    catalogue_path: Option<&'static str>,
 }
 
 const SOURCES: [Source; 2] = [
@@ -20,12 +21,14 @@ const SOURCES: [Source; 2] = [
         repository: "JohnEarnest/chip8Archive",
         revision: "master",
         path_prefix: "roms/",
+        catalogue_path: Some("programs.json"),
     },
     Source {
         name: "dmatlack/chip8",
         repository: "dmatlack/chip8",
         revision: "master",
         path_prefix: "roms/",
+        catalogue_path: None,
     },
 ];
 
@@ -49,6 +52,7 @@ pub struct RomLibrary {
     pub games: Vec<Game>,
     pub status: String,
     pub filter: String,
+    pub profile_filter: Option<CompatibilityProfile>,
 }
 
 impl RomLibrary {
@@ -69,6 +73,7 @@ impl RomLibrary {
             games: Vec::new(),
             status: "Chargement des bibliothèques…".into(),
             filter: String::new(),
+            profile_filter: None,
         }
     }
 
@@ -113,6 +118,11 @@ struct TreeEntry {
     kind: String,
 }
 
+#[derive(Deserialize)]
+struct CatalogueEntry {
+    platform: Option<String>,
+}
+
 fn fetch_games() -> Result<Vec<Game>, String> {
     let client = client()?;
     let mut games = Vec::new();
@@ -138,6 +148,10 @@ fn fetch_games() -> Result<Vec<Game>, String> {
 }
 
 fn fetch_source(client: &reqwest::blocking::Client, source: Source) -> Result<Vec<Game>, String> {
+    let catalogue = source
+        .catalogue_path
+        .and_then(|path| fetch_catalogue(client, source, path).ok())
+        .unwrap_or_default();
     let url = format!(
         "https://api.github.com/repos/{}/git/trees/{}?recursive=1",
         source.repository, source.revision
@@ -162,9 +176,28 @@ fn fetch_source(client: &reqwest::blocking::Client, source: Source) -> Result<Ve
                 "https://raw.githubusercontent.com/{}/{}/{}",
                 source.repository, source.revision, entry.path
             ),
-            profile: profile_for(&entry.path),
+            profile: profile_for(&entry.path, &catalogue),
         })
         .collect())
+}
+
+fn fetch_catalogue(
+    client: &reqwest::blocking::Client,
+    source: Source,
+    path: &str,
+) -> Result<HashMap<String, CatalogueEntry>, String> {
+    let url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}",
+        source.repository, source.revision, path
+    );
+    client
+        .get(url)
+        .send()
+        .map_err(request_error)?
+        .error_for_status()
+        .map_err(request_error)?
+        .json()
+        .map_err(request_error)
 }
 
 fn download_rom(game: &Game) -> Result<Vec<u8>, String> {
@@ -202,11 +235,27 @@ fn game_name(path: &str) -> String {
         .to_owned()
 }
 
-fn profile_for(path: &str) -> CompatibilityProfile {
+fn profile_for(path: &str, catalogue: &HashMap<String, CatalogueEntry>) -> CompatibilityProfile {
+    let identifier = game_name(path);
+    if let Some(platform) = catalogue
+        .get(&identifier)
+        .and_then(|entry| entry.platform.as_deref())
+    {
+        return profile_for_platform(platform);
+    }
     if path.contains("/hires/") {
         CompatibilityProfile::SuperChip
     } else {
         CompatibilityProfile::OriginalChip8
+    }
+}
+
+fn profile_for_platform(platform: &str) -> CompatibilityProfile {
+    match platform.to_ascii_lowercase().as_str() {
+        "chip48" => CompatibilityProfile::Chip48,
+        "schip" | "superchip" => CompatibilityProfile::SuperChip,
+        "xo-chip" | "xochip" => CompatibilityProfile::XoChip,
+        _ => CompatibilityProfile::OriginalChip8,
     }
 }
 
@@ -222,8 +271,17 @@ mod tests {
     #[test]
     fn hires_roms_use_the_super_chip_profile() {
         assert_eq!(
-            profile_for("roms/hires/Trip8.ch8"),
+            profile_for("roms/hires/Trip8.ch8", &HashMap::new()),
             CompatibilityProfile::SuperChip
         );
+    }
+
+    #[test]
+    fn maps_catalogue_platforms_to_emulation_profiles() {
+        assert_eq!(
+            profile_for_platform("schip"),
+            CompatibilityProfile::SuperChip
+        );
+        assert_eq!(profile_for_platform("xochip"), CompatibilityProfile::XoChip);
     }
 }

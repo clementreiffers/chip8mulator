@@ -373,10 +373,29 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
         ui.horizontal(|ui| {
             ui.label("Rechercher");
             ui.text_edit_singleline(&mut library.filter);
+            egui::ComboBox::from_label("Architecture")
+                .selected_text(profile_filter_label(library.profile_filter))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut library.profile_filter, None, "Toutes");
+                    for profile in [
+                        CompatibilityProfile::OriginalChip8,
+                        CompatibilityProfile::Chip48,
+                        CompatibilityProfile::Modern,
+                        CompatibilityProfile::SuperChip,
+                        CompatibilityProfile::XoChip,
+                    ] {
+                        ui.selectable_value(
+                            &mut library.profile_filter,
+                            Some(profile),
+                            profile_filter_label(Some(profile)),
+                        );
+                    }
+                });
         });
         ui.label(&library.status);
         ui.separator();
         let filter = library.filter.to_lowercase();
+        let profile_filter = library.profile_filter;
         let games: Vec<_> = library
             .games
             .iter()
@@ -385,6 +404,7 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
                     || game.name.to_lowercase().contains(&filter)
                     || game.source.to_lowercase().contains(&filter)
             })
+            .filter(|game| profile_filter.is_none_or(|profile| game.profile == profile))
             .cloned()
             .collect();
         egui::ScrollArea::vertical()
@@ -396,10 +416,25 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
                             library.download(game.clone());
                         }
                         ui.small(format!("Source : {}", game.source));
+                        ui.small(format!(
+                            "Architecture : {}",
+                            profile_filter_label(Some(game.profile))
+                        ));
                     });
                 }
             });
     });
+}
+
+const fn profile_filter_label(profile: Option<CompatibilityProfile>) -> &'static str {
+    match profile {
+        None => "Toutes",
+        Some(CompatibilityProfile::OriginalChip8) => "CHIP-8",
+        Some(CompatibilityProfile::Chip48) => "CHIP-48",
+        Some(CompatibilityProfile::Modern) => "Modern",
+        Some(CompatibilityProfile::SuperChip) => "Super-CHIP",
+        Some(CompatibilityProfile::XoChip) => "XO-CHIP",
+    }
 }
 
 fn show_settings_window(
