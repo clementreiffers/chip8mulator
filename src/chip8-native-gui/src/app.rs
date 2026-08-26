@@ -29,10 +29,20 @@ pub struct App {
 }
 
 impl App {
+    #[cfg(test)]
     pub fn new(
         rom: Vec<u8>,
         debug_mode: bool,
         profile: CompatibilityProfile,
+    ) -> Result<Self, Chip8Error> {
+        Self::with_audio_state(rom, debug_mode, profile, audio::shared_state())
+    }
+
+    pub fn with_audio_state(
+        rom: Vec<u8>,
+        debug_mode: bool,
+        profile: CompatibilityProfile,
+        audio: SharedAudio,
     ) -> Result<Self, Chip8Error> {
         let mut app = Self {
             chip8: Chip8::new(Chip8Config {
@@ -48,7 +58,7 @@ impl App {
             frame_dirty: true,
             debug: debug_mode.then(DebugState::default),
             skip_breakpoint_once: None,
-            audio: audio::shared_state(),
+            audio,
         };
         app.restart()?;
         Ok(app)
@@ -368,5 +378,44 @@ mod tests {
             App::new(vec![0x00, 0xFD], false, CompatibilityProfile::SuperChip).expect("valid ROM");
         assert!(app.advance(Duration::from_millis(10)).expect("valid ROM"));
         assert!(app.is_halted());
+    }
+
+    #[test]
+    fn replacing_a_rom_reuses_and_resets_the_audio_state() {
+        let audio = audio::shared_state();
+        let mut rom = vec![0; 0xE10];
+        rom[..12].copy_from_slice(&[
+            0xF0, 0x00, 0x10, 0x00, // I = 0x1000
+            0xF0, 0x02, // load the XO-CHIP audio pattern
+            0x60, 0x0A, // V0 = ten timer ticks
+            0xF0, 0x18, // start the sound timer
+            0x12, 0x0A, // loop
+        ]);
+        rom[0xE00..].copy_from_slice(&[
+            0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        let mut sounding =
+            App::with_audio_state(rom, false, CompatibilityProfile::XoChip, Arc::clone(&audio))
+                .expect("valid XO-CHIP ROM");
+        sounding
+            .advance(Duration::from_millis(20))
+            .expect("runs ROM");
+
+        let snapshot = audio.snapshot();
+        assert!(snapshot.active);
+        assert_eq!(
+            snapshot.pattern[..8],
+            [0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA]
+        );
+
+        let _replacement = App::with_audio_state(
+            vec![],
+            false,
+            CompatibilityProfile::OriginalChip8,
+            audio.clone(),
+        )
+        .expect("valid replacement ROM");
+
+        assert!(!audio.snapshot().active);
     }
 }

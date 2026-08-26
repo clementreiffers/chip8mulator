@@ -80,12 +80,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let mut frame_texture = None;
     let mut settings_open = false;
-    let mut app = App::new(rom, debug_mode, profile)?;
+    let audio_state = audio::shared_state();
+    let mut app = App::with_audio_state(rom, debug_mode, profile, Arc::clone(&audio_state))?;
     let mut library_view = LibraryView {
         library: RomLibrary::load(),
         open: library_open,
     };
-    let _audio = match audio::AudioOutput::open(app.audio_state()) {
+    let _audio = match audio::AudioOutput::open(audio_state) {
         Ok(output) => Some(output),
         Err(error) => {
             eprintln!("audio disabled: {error}");
@@ -128,7 +129,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                         if let Some(Update::LoadedGame { game, bytes }) =
                             library_view.library.receive_updates()
                         {
-                            match App::new(bytes, debug_mode, game.profile) {
+                            match App::with_audio_state(
+                                bytes,
+                                debug_mode,
+                                game.profile,
+                                app.audio_state(),
+                            ) {
                                 Ok(loaded_app) => {
                                     if let Some(recommended_palette) = game.palette {
                                         for (colour, [red, green, blue]) in

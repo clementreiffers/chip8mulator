@@ -37,7 +37,7 @@ pub struct AudioState {
 }
 
 impl AudioState {
-    fn snapshot(&self) -> AudioSnapshot {
+    pub(crate) fn snapshot(&self) -> AudioSnapshot {
         AudioSnapshot {
             pattern: self
                 .pattern
