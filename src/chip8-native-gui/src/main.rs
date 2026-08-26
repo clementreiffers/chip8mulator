@@ -165,12 +165,15 @@ fn show_interface(
             frame_texture.as_ref().expect("frame texture initialized"),
         );
     } else {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            show_screen(
-                ui,
-                frame_texture.as_ref().expect("frame texture initialized"),
-            )
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().inner_margin(0.0))
+            .show(ctx, |ui| {
+                show_screen(
+                    ui,
+                    frame_texture.as_ref().expect("frame texture initialized"),
+                    None,
+                )
+            });
     }
 }
 
@@ -255,7 +258,7 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
             }
         });
     egui::CentralPanel::default().show(ctx, |ui| {
-        show_screen(ui, texture);
+        show_screen(ui, texture, Some(640.0));
         ui.separator();
         ui.heading("Instructions exécutées");
         let mut toggled_breakpoint = None;
@@ -317,8 +320,11 @@ fn show_debug_interface(ctx: &egui::Context, app: &mut App, texture: &egui::Text
     }
 }
 
-fn show_screen(ui: &mut egui::Ui, texture: &egui::TextureHandle) {
-    let width = ui.available_width().min(640.0);
+fn show_screen(ui: &mut egui::Ui, texture: &egui::TextureHandle, maximum_width: Option<f32>) {
+    let width = maximum_width.map_or_else(
+        || ui.available_width(),
+        |maximum| ui.available_width().min(maximum),
+    );
     ui.image((texture.id(), egui::vec2(width, width / 2.0)));
 }
 
