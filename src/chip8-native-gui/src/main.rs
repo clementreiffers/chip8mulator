@@ -226,7 +226,7 @@ fn parse_args(
         } else if arg == "--profile" {
             let value = args.next().ok_or_else(|| {
                 format!(
-                    "--profile requires a value (chip8, chip48, modern, superchip, xochip)\n\n{}",
+                    "--profile requires a value (chip8, chip48, modern, superchip, schip10, schip11, schipc, schip-modern, xochip)\n\n{}",
                     usage()
                 )
             })?;
@@ -235,6 +235,10 @@ fn parse_args(
                 "chip48" => CompatibilityProfile::Chip48,
                 "modern" => CompatibilityProfile::Modern,
                 "superchip" => CompatibilityProfile::SuperChip,
+                "schip10" => CompatibilityProfile::SuperChip10,
+                "schip11" => CompatibilityProfile::SuperChip11,
+                "schipc" => CompatibilityProfile::SuperChipCompatibility,
+                "schip-modern" => CompatibilityProfile::SuperChipModern,
                 "xochip" => CompatibilityProfile::XoChip,
                 _ => {
                     return Err(format!(
@@ -311,7 +315,7 @@ fn parse_color(value: &str) -> Result<egui::Color32, String> {
 }
 
 fn usage() -> &'static str {
-    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|xochip] [--palette #RRGGBB,#RRGGBB,#RRGGBB,#RRGGBB] [rom.ch8]\n\nWithout a ROM, the game library opens. Controls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
+    "usage: chip8-native-gui [--debug-mode] [--profile chip8|chip48|modern|superchip|schip10|schip11|schipc|schip-modern|xochip] [--palette #RRGGBB,#RRGGBB,#RRGGBB,#RRGGBB] [rom.ch8]\n\nWithout a ROM, the game library opens. Controls: Space pause, F10 step (debug), F5 restart, F1/F2/F3/F4/F6 compatibility profile, Esc quit."
 }
 
 fn show_interface(
@@ -397,6 +401,10 @@ fn show_library(ctx: &egui::Context, library: &mut RomLibrary) {
                         CompatibilityProfile::OriginalChip8,
                         CompatibilityProfile::Chip48,
                         CompatibilityProfile::Modern,
+                        CompatibilityProfile::SuperChip10,
+                        CompatibilityProfile::SuperChip11,
+                        CompatibilityProfile::SuperChipCompatibility,
+                        CompatibilityProfile::SuperChipModern,
                         CompatibilityProfile::SuperChip,
                         CompatibilityProfile::XoChip,
                     ] {
@@ -448,6 +456,10 @@ const fn profile_filter_label(profile: Option<CompatibilityProfile>) -> &'static
         Some(CompatibilityProfile::OriginalChip8) => "CHIP-8",
         Some(CompatibilityProfile::Chip48) => "CHIP-48",
         Some(CompatibilityProfile::Modern) => "Modern",
+        Some(CompatibilityProfile::SuperChip10) => "Super-CHIP 1.0",
+        Some(CompatibilityProfile::SuperChip11) => "Super-CHIP 1.1",
+        Some(CompatibilityProfile::SuperChipCompatibility) => "SCHIPC",
+        Some(CompatibilityProfile::SuperChipModern) => "Super-CHIP moderne",
         Some(CompatibilityProfile::SuperChip) => "Super-CHIP",
         Some(CompatibilityProfile::XoChip) => "XO-CHIP",
     }
@@ -653,14 +665,7 @@ fn show_debug_interface(
         let _ = app.handle_command(winit::keyboard::KeyCode::F5);
     }
     if let Some(profile) = profile {
-        let key = match profile {
-            CompatibilityProfile::OriginalChip8 => winit::keyboard::KeyCode::F1,
-            CompatibilityProfile::Chip48 => winit::keyboard::KeyCode::F2,
-            CompatibilityProfile::Modern => winit::keyboard::KeyCode::F3,
-            CompatibilityProfile::SuperChip => winit::keyboard::KeyCode::F4,
-            CompatibilityProfile::XoChip => winit::keyboard::KeyCode::F6,
-        };
-        let _ = app.handle_command(key);
+        let _ = app.set_profile(profile);
     }
 }
 

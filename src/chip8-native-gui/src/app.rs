@@ -106,7 +106,7 @@ impl App {
             if result.halted {
                 return Ok(true);
             }
-            if result.waiting_for_key {
+            if result.waiting_for_key || result.waiting_for_vblank {
                 break;
             }
         }
@@ -208,7 +208,7 @@ impl App {
         Ok(())
     }
 
-    fn set_profile(&mut self, profile: CompatibilityProfile) -> Result<(), Chip8Error> {
+    pub fn set_profile(&mut self, profile: CompatibilityProfile) -> Result<(), Chip8Error> {
         self.profile = profile;
         self.chip8 = Chip8::new(Chip8Config {
             profile,

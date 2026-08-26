@@ -12,6 +12,13 @@ pub(crate) enum DisplayMode {
     HighResolution,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DrawResult {
+    pub(crate) collision: bool,
+    pub(crate) collided_rows: u8,
+    pub(crate) clipped_rows: u8,
+}
+
 impl DisplayMode {
     pub(crate) const fn dimensions(self) -> (usize, usize) {
         match self {
@@ -53,13 +60,19 @@ impl Framebuffer {
         self.refresh();
     }
 
-    pub(crate) fn set_mode(&mut self, mode: DisplayMode) {
+    pub(crate) fn set_mode(&mut self, mode: DisplayMode, clear: bool) {
         self.mode = mode;
-        self.clear();
+        if clear {
+            self.clear();
+        }
     }
 
     pub(crate) const fn dimensions(&self) -> (usize, usize) {
         self.mode.dimensions()
+    }
+
+    pub(crate) const fn is_low_resolution(&self) -> bool {
+        matches!(self.mode, DisplayMode::LowResolution)
     }
 
     pub(crate) fn pixels(&self) -> &[u8] {
@@ -69,14 +82,27 @@ impl Framebuffer {
 
     /// XOR a sprite at `(x, y)`, returning whether an illuminated pixel was erased.
     pub(crate) fn draw(&mut self, x: u8, y: u8, sprite: &[u8], wrap: bool, planes: u8) -> bool {
+        self.draw_with_result(x, y, sprite, wrap, planes).collision
+    }
+
+    pub(crate) fn draw_with_result(
+        &mut self,
+        x: u8,
+        y: u8,
+        sprite: &[u8],
+        wrap: bool,
+        planes: u8,
+    ) -> DrawResult {
         let (width, height) = self.dimensions();
-        let mut collision = false;
+        let mut result = DrawResult::default();
         for (row, byte) in sprite.iter().copied().enumerate() {
             let py = usize::from(y) + row;
             if !wrap && py >= height {
+                result.clipped_rows = result.clipped_rows.saturating_add(1);
                 continue;
             }
             let py = py % height;
+            let mut row_collision = false;
             for bit in 0..8 {
                 if byte & (0x80 >> bit) == 0 {
                     continue;
@@ -86,11 +112,13 @@ impl Framebuffer {
                     continue;
                 }
                 let index = py * width + (px % width);
-                collision |= self.toggle(index, planes);
+                row_collision |= self.toggle(index, planes);
             }
+            result.collision |= row_collision;
+            result.collided_rows += u8::from(row_collision);
         }
         self.refresh();
-        collision
+        result
     }
 
     pub(crate) fn draw_16x16(
@@ -101,16 +129,30 @@ impl Framebuffer {
         wrap: bool,
         planes: u8,
     ) -> bool {
+        self.draw_16x16_with_result(x, y, sprite, wrap, planes)
+            .collision
+    }
+
+    pub(crate) fn draw_16x16_with_result(
+        &mut self,
+        x: u8,
+        y: u8,
+        sprite: &[u8],
+        wrap: bool,
+        planes: u8,
+    ) -> DrawResult {
         debug_assert_eq!(sprite.len(), 32);
         let (width, height) = self.dimensions();
-        let mut collision = false;
+        let mut result = DrawResult::default();
         for row in 0..16 {
             let bits = u16::from_be_bytes([sprite[row * 2], sprite[row * 2 + 1]]);
             let py = usize::from(y) + row;
             if !wrap && py >= height {
+                result.clipped_rows = result.clipped_rows.saturating_add(1);
                 continue;
             }
             let py = py % height;
+            let mut row_collision = false;
             for bit in 0..16 {
                 if bits & (0x8000 >> bit) == 0 {
                     continue;
@@ -120,11 +162,13 @@ impl Framebuffer {
                     continue;
                 }
                 let index = py * width + (px % width);
-                collision |= self.toggle(index, planes);
+                row_collision |= self.toggle(index, planes);
             }
+            result.collision |= row_collision;
+            result.collided_rows += u8::from(row_collision);
         }
         self.refresh();
-        collision
+        result
     }
 
     pub(crate) fn scroll_down(&mut self, rows: usize, planes: u8) {
@@ -233,7 +277,7 @@ mod tests {
     #[test]
     fn superchip_scrolls_and_switches_resolution() {
         let mut display = Framebuffer::default();
-        display.set_mode(DisplayMode::HighResolution);
+        display.set_mode(DisplayMode::HighResolution, true);
         assert_eq!(display.dimensions(), (128, 64));
         display.draw(0, 0, &[0x80], false, 1);
         display.scroll_right(4, 1);

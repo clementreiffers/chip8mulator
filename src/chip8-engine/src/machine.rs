@@ -50,6 +50,15 @@ pub enum CompatibilityProfile {
     OriginalChip8,
     Chip48,
     Modern,
+    /// Historical Super-CHIP 1.0 interpreter.
+    SuperChip10,
+    /// Historical Super-CHIP 1.1 interpreter.
+    SuperChip11,
+    /// HP-48 Super-CHIP compatibility interpreter (SCHIPC).
+    SuperChipCompatibility,
+    /// Contemporary Super-CHIP behavior.
+    SuperChipModern,
+    /// Backwards-compatible name for [`Self::SuperChipModern`].
     SuperChip,
     XoChip,
 }
@@ -58,24 +67,94 @@ impl CompatibilityProfile {
     pub(crate) const fn shift_uses_vy(self) -> bool {
         matches!(self, Self::OriginalChip8)
     }
-    pub(crate) const fn increment_i_after_store_load(self) -> bool {
-        matches!(self, Self::OriginalChip8)
+    pub(crate) const fn store_load_i_increment(self) -> StoreLoadIIncrement {
+        match self {
+            Self::OriginalChip8 => StoreLoadIIncrement::XPlusOne,
+            Self::Chip48 | Self::SuperChip10 => StoreLoadIIncrement::X,
+            Self::Modern
+            | Self::SuperChip11
+            | Self::SuperChipCompatibility
+            | Self::SuperChipModern
+            | Self::SuperChip
+            | Self::XoChip => StoreLoadIIncrement::None,
+        }
     }
     pub(crate) const fn jump_uses_vx(self) -> bool {
-        matches!(self, Self::Chip48 | Self::SuperChip | Self::XoChip)
+        matches!(
+            self,
+            Self::Chip48
+                | Self::SuperChip10
+                | Self::SuperChip11
+                | Self::SuperChipCompatibility
+                | Self::SuperChipModern
+                | Self::SuperChip
+        )
     }
     pub(crate) const fn draw_wraps(self) -> bool {
-        !matches!(self, Self::Chip48 | Self::SuperChip | Self::XoChip)
+        !matches!(
+            self,
+            Self::Chip48
+                | Self::SuperChip10
+                | Self::SuperChip11
+                | Self::SuperChipCompatibility
+                | Self::SuperChipModern
+                | Self::SuperChip
+        )
     }
     pub(crate) const fn logic_clears_vf(self) -> bool {
         matches!(self, Self::OriginalChip8)
     }
     pub(crate) const fn supports_superchip(self) -> bool {
-        matches!(self, Self::SuperChip | Self::XoChip)
+        matches!(
+            self,
+            Self::SuperChip10
+                | Self::SuperChip11
+                | Self::SuperChipCompatibility
+                | Self::SuperChipModern
+                | Self::SuperChip
+                | Self::XoChip
+        )
     }
     pub(crate) const fn supports_xochip(self) -> bool {
         matches!(self, Self::XoChip)
     }
+    pub(crate) const fn schip_lores_scrolls_half_distance(self) -> bool {
+        matches!(
+            self,
+            Self::SuperChip10 | Self::SuperChip11 | Self::SuperChipCompatibility
+        )
+    }
+    pub(crate) const fn schip_rejects_zero_scroll(self) -> bool {
+        matches!(self, Self::SuperChipCompatibility)
+    }
+    pub(crate) const fn schip_lores_dxy0_is_8x16(self) -> bool {
+        matches!(
+            self,
+            Self::SuperChip10 | Self::SuperChip11 | Self::SuperChipCompatibility
+        )
+    }
+    pub(crate) const fn preserves_screen_on_mode_change(self) -> bool {
+        matches!(self, Self::SuperChip10 | Self::SuperChip11)
+    }
+    pub(crate) const fn schip_11_counts_collision_rows(self) -> bool {
+        matches!(self, Self::SuperChip11)
+    }
+    pub(crate) const fn rpl_register_limit(self) -> usize {
+        if self.supports_xochip() { 16 } else { 8 }
+    }
+    pub(crate) const fn waits_for_vblank_after_draw(self) -> bool {
+        matches!(self, Self::OriginalChip8 | Self::SuperChipCompatibility)
+    }
+    pub(crate) const fn key_waits_for_release(self) -> bool {
+        self.supports_superchip()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoreLoadIIncrement {
+    None,
+    X,
+    XPlusOne,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +176,7 @@ impl Default for Chip8Config {
 pub struct CycleResult {
     pub drew: bool,
     pub waiting_for_key: bool,
+    pub waiting_for_vblank: bool,
     pub halted: bool,
 }
 
@@ -147,6 +227,8 @@ pub struct Chip8 {
     pub(crate) delay_timer: u8,
     pub(crate) sound_timer: u8,
     pub(crate) keys: [bool; 16],
+    pub(crate) key_wait: Option<KeyWait>,
+    pub(crate) vblank_wait: bool,
     pub(crate) display: Framebuffer,
     pub(crate) rpl: [u8; 16],
     pub(crate) plane_mask: u8,
@@ -175,6 +257,8 @@ impl Chip8 {
             delay_timer: 0,
             sound_timer: 0,
             keys: [false; 16],
+            key_wait: None,
+            vblank_wait: false,
             display: Framebuffer::default(),
             rpl: [0; 16],
             plane_mask: 1,
@@ -205,8 +289,10 @@ impl Chip8 {
         self.delay_timer = 0;
         self.sound_timer = 0;
         self.keys = [false; 16];
+        self.key_wait = None;
+        self.vblank_wait = false;
         self.display.clear();
-        self.display.set_mode(DisplayMode::LowResolution);
+        self.display.set_mode(DisplayMode::LowResolution, true);
         self.rpl = [0; 16];
         self.plane_mask = 1;
         self.audio_pattern = [0; 16];
@@ -231,6 +317,9 @@ impl Chip8 {
         let decrement = ticks.min(u128::from(u8::MAX)) as u8;
         self.delay_timer = self.delay_timer.saturating_sub(decrement);
         self.sound_timer = self.sound_timer.saturating_sub(decrement);
+        if ticks != 0 {
+            self.vblank_wait = false;
+        }
         returned_ticks
     }
 
@@ -308,6 +397,12 @@ impl Chip8 {
             .wrapping_add(1_013_904_223);
         (self.rng_state >> 24) as u8
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyWait {
+    Press { register: usize, ignored: u16 },
+    Release { register: usize, key: u8 },
 }
 
 impl Default for Chip8 {

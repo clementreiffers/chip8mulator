@@ -1,9 +1,17 @@
 use crate::{
-    machine::{Chip8, Chip8Error, CycleResult, HIGH_FONT_START, RAM_SIZE},
+    machine::{
+        Chip8, Chip8Error, CycleResult, HIGH_FONT_START, KeyWait, RAM_SIZE, StoreLoadIIncrement,
+    },
     peripherals::DisplayMode,
 };
 
 pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
+    if chip.vblank_wait {
+        return Ok(CycleResult {
+            waiting_for_vblank: true,
+            ..CycleResult::default()
+        });
+    }
     let pc = chip.pc;
     let high = chip
         .read(pc)
@@ -42,24 +50,54 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
                 next_pc = chip.stack[chip.sp];
             }
             0x00FB if chip.config.profile.supports_superchip() => {
-                chip.display.scroll_right(4, chip.plane_mask);
+                let columns = if chip.config.profile.schip_lores_scrolls_half_distance()
+                    && chip.display.is_low_resolution()
+                {
+                    2
+                } else {
+                    4
+                };
+                chip.display.scroll_right(columns, chip.plane_mask);
                 result.drew = true;
             }
             0x00FC if chip.config.profile.supports_superchip() => {
-                chip.display.scroll_left(4, chip.plane_mask);
+                let columns = if chip.config.profile.schip_lores_scrolls_half_distance()
+                    && chip.display.is_low_resolution()
+                {
+                    2
+                } else {
+                    4
+                };
+                chip.display.scroll_left(columns, chip.plane_mask);
                 result.drew = true;
             }
             0x00FD if chip.config.profile.supports_superchip() => result.halted = true,
             0x00FE if chip.config.profile.supports_superchip() => {
-                chip.display.set_mode(DisplayMode::LowResolution);
+                chip.display.set_mode(
+                    DisplayMode::LowResolution,
+                    !chip.config.profile.preserves_screen_on_mode_change(),
+                );
                 result.drew = true;
             }
             0x00FF if chip.config.profile.supports_superchip() => {
-                chip.display.set_mode(DisplayMode::HighResolution);
+                chip.display.set_mode(
+                    DisplayMode::HighResolution,
+                    !chip.config.profile.preserves_screen_on_mode_change(),
+                );
                 result.drew = true;
             }
             0x00C0..=0x00CF if chip.config.profile.supports_superchip() => {
-                chip.display.scroll_down(usize::from(n), chip.plane_mask);
+                if n == 0 && chip.config.profile.schip_rejects_zero_scroll() {
+                    return invalid(opcode, pc);
+                }
+                let rows = if chip.config.profile.schip_lores_scrolls_half_distance()
+                    && chip.display.is_low_resolution()
+                {
+                    usize::from(n / 2)
+                } else {
+                    usize::from(n)
+                };
+                chip.display.scroll_down(rows, chip.plane_mask);
                 result.drew = true;
             }
             0x00D0..=0x00DF if chip.config.profile.supports_xochip() => {
@@ -113,7 +151,13 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
         0xC000 => chip.v[x] = chip.next_random() & kk,
         0xD000 => {
             let sprite_len = if n == 0 && chip.config.profile.supports_superchip() {
-                32
+                if chip.config.profile.schip_lores_dxy0_is_8x16()
+                    && chip.display.is_low_resolution()
+                {
+                    16
+                } else {
+                    32
+                }
             } else {
                 usize::from(n)
             };
@@ -161,25 +205,54 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
                     }
                 }
                 collision
-            } else if n == 0 && chip.config.profile.supports_superchip() {
-                chip.display.draw_16x16(
+            } else if n == 0 && chip.config.profile.supports_superchip() && sprite_len == 32 {
+                let draw = chip.display.draw_16x16_with_result(
                     chip.v[x],
                     chip.v[y],
                     &sprite,
                     chip.config.profile.draw_wraps(),
                     1,
-                )
+                );
+                if chip.config.profile.schip_11_counts_collision_rows()
+                    && !chip.display.is_low_resolution()
+                {
+                    chip.v[0xF] = draw.collided_rows.saturating_add(draw.clipped_rows);
+                    result.drew = true;
+                    if chip.config.profile.waits_for_vblank_after_draw()
+                        && chip.display.is_low_resolution()
+                    {
+                        chip.vblank_wait = true;
+                        result.waiting_for_vblank = true;
+                    }
+                    chip.pc = next_pc;
+                    return Ok(result);
+                }
+                draw.collision
             } else {
-                chip.display.draw(
+                let draw = chip.display.draw_with_result(
                     chip.v[x],
                     chip.v[y],
                     &sprite,
                     chip.config.profile.draw_wraps(),
                     1,
-                )
+                );
+                if chip.config.profile.schip_11_counts_collision_rows()
+                    && !chip.display.is_low_resolution()
+                {
+                    chip.v[0xF] = draw.collided_rows.saturating_add(draw.clipped_rows);
+                    result.drew = true;
+                    chip.pc = next_pc;
+                    return Ok(result);
+                }
+                draw.collision
             };
             chip.v[0xF] = u8::from(collision);
             result.drew = true;
+            if chip.config.profile.waits_for_vblank_after_draw() && chip.display.is_low_resolution()
+            {
+                chip.vblank_wait = true;
+                result.waiting_for_vblank = true;
+            }
         }
         0xE000 => match kk {
             0x9E => {
@@ -212,13 +285,7 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
         }
         0xF000 => match kk {
             0x07 => chip.v[x] = chip.delay_timer,
-            0x0A => match chip.keys.iter().position(|pressed| *pressed) {
-                Some(key) => chip.v[x] = key as u8,
-                None => {
-                    result.waiting_for_key = true;
-                    next_pc = pc;
-                }
-            },
+            0x0A => wait_for_key(chip, x, pc, &mut next_pc, &mut result),
             0x15 => chip.delay_timer = chip.v[x],
             0x18 => chip.sound_timer = chip.v[x],
             0x1E => chip.i = chip.i.wrapping_add(u16::from(chip.v[x])),
@@ -252,13 +319,13 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
             0x55 => store_registers(chip, x)?,
             0x65 => load_registers(chip, x)?,
             0x3A if chip.config.profile.supports_xochip() => chip.audio_pitch = chip.v[x],
-            0x75 if chip.config.profile.supports_xochip()
-                || (chip.config.profile.supports_superchip() && x < 8) =>
+            0x75 if chip.config.profile.supports_superchip()
+                && x < chip.config.profile.rpl_register_limit() =>
             {
                 chip.rpl[..=x].copy_from_slice(&chip.v[..=x]);
             }
-            0x85 if chip.config.profile.supports_xochip()
-                || (chip.config.profile.supports_superchip() && x < 8) =>
+            0x85 if chip.config.profile.supports_superchip()
+                && x < chip.config.profile.rpl_register_limit() =>
             {
                 chip.v[..=x].copy_from_slice(&chip.rpl[..=x]);
             }
@@ -335,10 +402,78 @@ fn clear_vf_for_logic(chip: &mut Chip8) {
     }
 }
 fn key_pressed(chip: &Chip8, x: usize) -> Result<bool, Chip8Error> {
+    let key = chip.v[x] & 0x0F;
     chip.keys
-        .get(usize::from(chip.v[x]))
+        .get(usize::from(key))
         .copied()
-        .ok_or(Chip8Error::InvalidKey { key: chip.v[x] })
+        .ok_or(Chip8Error::InvalidKey { key })
+}
+fn wait_for_key(
+    chip: &mut Chip8,
+    register: usize,
+    pc: u16,
+    next_pc: &mut u16,
+    result: &mut CycleResult,
+) {
+    if !chip.config.profile.key_waits_for_release() {
+        if let Some(key) = chip.keys.iter().position(|pressed| *pressed) {
+            chip.v[register] = key as u8;
+        } else {
+            result.waiting_for_key = true;
+            *next_pc = pc;
+        }
+        return;
+    }
+
+    match chip.key_wait {
+        None => {
+            let ignored = chip
+                .keys
+                .iter()
+                .enumerate()
+                .fold(0u16, |mask, (key, pressed)| {
+                    mask | (u16::from(*pressed) << key)
+                });
+            chip.key_wait = Some(KeyWait::Press { register, ignored });
+            result.waiting_for_key = true;
+            *next_pc = pc;
+        }
+        Some(KeyWait::Press {
+            register,
+            mut ignored,
+        }) => {
+            for (key, pressed) in chip.keys.iter().enumerate() {
+                if !pressed {
+                    ignored &= !(1 << key);
+                }
+            }
+            if let Some(key) =
+                chip.keys.iter().enumerate().find_map(|(key, pressed)| {
+                    (*pressed && ignored & (1 << key) == 0).then_some(key)
+                })
+            {
+                chip.key_wait = Some(KeyWait::Release {
+                    register,
+                    key: key as u8,
+                });
+                result.waiting_for_key = true;
+                *next_pc = pc;
+            } else {
+                chip.key_wait = Some(KeyWait::Press { register, ignored });
+                result.waiting_for_key = true;
+                *next_pc = pc;
+            }
+        }
+        Some(KeyWait::Release { register, key }) => {
+            if !chip.keys[usize::from(key)] {
+                chip.v[register] = key;
+                chip.key_wait = None;
+            } else {
+                result.waiting_for_key = true;
+                *next_pc = pc;
+            }
+        }
+    }
 }
 fn skip(chip: &Chip8, pc: u16) -> Result<u16, Chip8Error> {
     let length = if chip.config.profile.supports_xochip()
@@ -399,9 +534,7 @@ fn store_registers(chip: &mut Chip8, x: usize) -> Result<(), Chip8Error> {
             chip.v[offset],
         )?;
     }
-    if chip.config.profile.increment_i_after_store_load() {
-        chip.i = chip.i.wrapping_add(x as u16 + 1);
-    }
+    increment_i_after_store_load(chip, x);
     Ok(())
 }
 fn load_registers(chip: &mut Chip8, x: usize) -> Result<(), Chip8Error> {
@@ -412,10 +545,17 @@ fn load_registers(chip: &mut Chip8, x: usize) -> Result<(), Chip8Error> {
             .ok_or(Chip8Error::MemoryOutOfBounds { address: chip.i })?;
         chip.v[offset] = chip.read(address)?;
     }
-    if chip.config.profile.increment_i_after_store_load() {
-        chip.i = chip.i.wrapping_add(x as u16 + 1);
-    }
+    increment_i_after_store_load(chip, x);
     Ok(())
+}
+
+fn increment_i_after_store_load(chip: &mut Chip8, x: usize) {
+    let increment = match chip.config.profile.store_load_i_increment() {
+        StoreLoadIIncrement::None => return,
+        StoreLoadIIncrement::X => x as u16,
+        StoreLoadIIncrement::XPlusOne => x as u16 + 1,
+    };
+    chip.i = chip.i.wrapping_add(increment);
 }
 
 #[cfg(test)]
@@ -484,6 +624,18 @@ mod tests {
         c.step().expect("skip");
         assert_eq!(c.pc, 0x206);
     }
+
+    #[test]
+    fn key_skip_opcodes_use_the_low_nibble_of_the_register() {
+        let mut c = chip(&[0x6010, 0xE09E, 0x6101]);
+        c.set_key(0, true).expect("valid key");
+        run(&mut c, 2);
+        assert_eq!(c.pc, 0x206);
+
+        let mut c = chip(&[0x601F, 0xE0A1, 0x6101]);
+        run(&mut c, 2);
+        assert_eq!(c.pc, 0x206);
+    }
     #[test]
     fn random_is_seeded() {
         let config = Chip8Config {
@@ -515,7 +667,7 @@ mod tests {
             .load_rom(&[0x60, 1, 0x61, 4, 0x80, 0x16, 0xA3, 0x00, 0xF1, 0x55])
             .expect("rom");
         run(&mut chip48, 5);
-        assert_eq!((chip48.v[0], chip48.i), (0, 0x300));
+        assert_eq!((chip48.v[0], chip48.i), (0, 0x301));
     }
     #[test]
     fn profiles_cover_logic_jump_and_drawing_quirks() {
@@ -666,5 +818,114 @@ mod tests {
             c.step().unwrap();
         }
         assert_eq!(c.framebuffer()[0], 0x0F);
+    }
+
+    #[test]
+    fn xochip_wraps_sprites_at_display_edges() {
+        let mut c = xochip(&[0xA2, 0x10, 0x60, 63, 0x61, 31, 0xD0, 0x11]);
+        c.memory[0x210] = 0xC0;
+        run(&mut c, 4);
+        assert_eq!(c.framebuffer()[31 * 64 + 63], 1);
+        assert_eq!(c.framebuffer()[31 * 64], 1);
+    }
+
+    #[test]
+    fn schip_profiles_apply_historical_store_load_and_scroll_quirks() {
+        let mut schip10 = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip10,
+            ..Chip8Config::default()
+        });
+        schip10
+            .load_rom(&[0x60, 1, 0x61, 2, 0xA3, 0, 0xF1, 0x55])
+            .expect("ROM");
+        run(&mut schip10, 4);
+        assert_eq!(schip10.i, 0x301);
+
+        let mut schipc = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChipCompatibility,
+            ..Chip8Config::default()
+        });
+        schipc.load_rom(&[0x00, 0xC0]).expect("ROM");
+        assert!(matches!(
+            schipc.step(),
+            Err(Chip8Error::InvalidOpcode { opcode: 0x00C0, .. })
+        ));
+
+        let mut scroll = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip10,
+            ..Chip8Config::default()
+        });
+        scroll.display.draw(0, 0, &[0x80], false, 1);
+        scroll.load_rom(&[0x00, 0xFB]).expect("ROM");
+        scroll.display.draw(0, 0, &[0x80], false, 1);
+        scroll.step().expect("scroll");
+        assert_eq!(scroll.framebuffer()[2], 1);
+    }
+
+    #[test]
+    fn schip_10_draws_dxy0_as_8_by_16_in_low_resolution() {
+        let mut c = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip10,
+            ..Chip8Config::default()
+        });
+        c.load_rom(&[0xA2, 0x10, 0x60, 0, 0x61, 0, 0xD0, 0x10])
+            .expect("ROM");
+        c.memory[0x210..0x220].fill(0x80);
+        run(&mut c, 4);
+        assert_eq!(c.framebuffer()[15 * 64], 1);
+        assert_eq!(c.framebuffer()[16 * 64], 0);
+    }
+
+    #[test]
+    fn schip_waits_for_a_new_key_press_and_release() {
+        let mut c = superchip(&[0xF00A]);
+        assert!(c.step().expect("start waiting").waiting_for_key);
+        c.set_key(5, true).expect("key");
+        assert!(c.step().expect("wait release").waiting_for_key);
+        c.set_key(5, false).expect("key");
+        assert!(!c.step().expect("release").waiting_for_key);
+        assert_eq!(c.v[0], 5);
+    }
+
+    #[test]
+    fn schip_1x_preserves_screen_contents_when_switching_resolution() {
+        let mut c = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip10,
+            ..Chip8Config::default()
+        });
+        c.load_rom(&[0xA2, 0x10, 0x60, 0, 0x61, 0, 0xD0, 0x11, 0x00, 0xFF])
+            .expect("ROM");
+        c.memory[0x210] = 0x80;
+        run(&mut c, 5);
+        assert_eq!(c.display_dimensions(), (128, 64));
+        assert_eq!(c.framebuffer()[0], 1);
+    }
+
+    #[test]
+    fn schip_11_reports_collided_and_clipped_sprite_rows_in_vf() {
+        let mut c = Chip8::new(Chip8Config {
+            profile: CompatibilityProfile::SuperChip11,
+            ..Chip8Config::default()
+        });
+        c.load_rom(&[
+            0x00, 0xFF, 0xA2, 0x10, 0x60, 0, 0x61, 63, 0xD0, 0x12, 0xD0, 0x12,
+        ])
+        .expect("ROM");
+        c.memory[0x210..0x212].fill(0x80);
+        run(&mut c, 5);
+        assert_eq!(c.v[0xF], 1);
+        c.step().expect("second draw");
+        assert_eq!(c.v[0xF], 2);
+    }
+
+    #[test]
+    fn original_chip8_draws_only_once_per_vblank() {
+        let mut c = chip(&[0xA210, 0x6000, 0x6100, 0xD011]);
+        c.memory[0x210] = 0x80;
+        run(&mut c, 3);
+        assert!(c.step().expect("draw").waiting_for_vblank);
+        assert!(c.step().expect("vblank block").waiting_for_vblank);
+        c.advance_timers(std::time::Duration::from_millis(17));
+        assert!(!c.step().expect("vblank released").waiting_for_vblank);
     }
 }

@@ -18,9 +18,17 @@ let pixels = chip.framebuffer();
 ```
 
 `Chip8Config` accepts a deterministic PRNG seed and one of the compatibility
-profiles `OriginalChip8` (the default), `Chip48`, `Modern`, or modern
-`SuperChip`. Super-CHIP programs can switch the framebuffer between 64×32 and
-128×64; query `display_dimensions()` whenever presenting `framebuffer()`.
+profiles `OriginalChip8` (the default), `Chip48`, `Modern`, `SuperChip`, or
+`XoChip`. `SuperChip` retains its existing modern behavior; use
+`SuperChip10`, `SuperChip11`, `SuperChipCompatibility` (SCHIPC), or
+`SuperChipModern` when a ROM needs a specific Super-CHIP interpreter.
+Super-CHIP programs can switch the framebuffer between 64×32 and 128×64;
+query `display_dimensions()` whenever presenting `framebuffer()`.
+
+For original CHIP-8 and SCHIPC in low resolution, drawing is throttled to the
+next 60 Hz frame. When `step()` returns `CycleResult::waiting_for_vblank`, a
+host should wait until it has called `advance_timers()` with enough elapsed
+time to produce a timer tick before executing more cycles.
 
 ## WebAssembly
 

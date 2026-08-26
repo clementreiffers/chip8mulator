@@ -279,6 +279,10 @@ fn profile_for_platform(platform: &str) -> CompatibilityProfile {
     match platform.to_ascii_lowercase().as_str() {
         "chip48" => CompatibilityProfile::Chip48,
         "schip" | "superchip" => CompatibilityProfile::SuperChip,
+        "schip-1.0" | "schip1.0" => CompatibilityProfile::SuperChip10,
+        "schip-1.1" | "schip1.1" => CompatibilityProfile::SuperChip11,
+        "schipc" => CompatibilityProfile::SuperChipCompatibility,
+        "schip-modern" | "superchip-modern" => CompatibilityProfile::SuperChipModern,
         "xo-chip" | "xochip" => CompatibilityProfile::XoChip,
         _ => CompatibilityProfile::OriginalChip8,
     }
