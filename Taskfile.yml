@@ -24,9 +24,14 @@ vars:
   MURDER_ROM: '{{.ROM_DIR}}/murder.ch8'
   MURDER_URL: https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/examples/murder.8o
   MURDER_SHA256: 23a4562d206909cadc01d6293f0d769aa5139c63531bb75b87c9387e555e50b0
+  SAFECRACKER_SOURCE: '{{.ROM_DIR}}/safecracker.8o'
   SAFECRACKER_ROM: '{{.ROM_DIR}}/safecracker.ch8'
-  SAFECRACKER_URL: https://github.com/pushfoo/Octo-Safecracker/releases/download/v1.0.1/safecracker.ch8
-  SAFECRACKER_SHA256: 83842a31b2a74174c2b4a424a58c0c9ceb70f38c855068913595da284118be99
+  SAFECRACKER_SOURCE_URL: https://raw.githubusercontent.com/pushfoo/Octo-Safecracker/main/main.8o
+  SAFECRACKER_SOURCE_SHA256: cc7f572bed5157d103625da77d882e040253235e7d5b5ee12e4266335ff3cdd1
+  ALIEN_INV8SION_SOURCE: '{{.ROM_DIR}}/alien-inv8sion.8o'
+  ALIEN_INV8SION_ROM: '{{.ROM_DIR}}/alien-inv8sion.ch8'
+  ALIEN_INV8SION_SOURCE_URL: https://raw.githubusercontent.com/Timendus/alien-inv8sion/main/bin/alien-inv8sion-octo.8o
+  ALIEN_INV8SION_SOURCE_SHA256: c08f0322764a99965d9cd2764aeb4ccbbb6232607c8fa38375e973fb60063459
 
 tasks:
   download-conformance-rom:
@@ -143,29 +148,108 @@ tasks:
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.XOCHIP_ROM}}
 
-  download-murder-rom:
-    desc: Download, verify and compile Octo's Murder XO-CHIP two-bitplane demo (requires the octo compiler)
+  download-murder-source:
+    desc: Download and verify Octo's Murder XO-CHIP two-bitplane demo source
     cmds:
       - mkdir -p {{.ROM_DIR}}
       - curl --fail --location --retry 3 --output {{.MURDER_SOURCE}} {{.MURDER_URL}}
       - 'printf "%s  %s\\n" "{{.MURDER_SHA256}}" "{{.MURDER_SOURCE}}" | shasum -a 256 --check'
-      - octo {{.MURDER_SOURCE}} {{.MURDER_ROM}}
 
-  play-murder:
-    desc: Compile then launch Murder with XO-CHIP colour planes and native audio
-    deps: [download-murder-rom]
+  compile-murder-xochip-docker:
+    desc: Compile the Murder XO-CHIP demo with the official Octo compiler in Docker
+    deps: [download-murder-source]
+    cmds:
+      - >-
+        docker run --rm
+        --volume "{{.ROOT_DIR}}:/workspace"
+        --workdir /workspace
+        node:22-alpine
+        sh -ec 'apk add --no-cache curl; curl --fail --location --retry 3 --output /tmp/compiler.js https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/js/compiler.js; node -e "const fs = require(\"fs\"); const { Compiler } = require(\"/tmp/compiler.js\"); const source = fs.readFileSync(process.argv[1], \"utf8\"); const compiler = new Compiler(source); compiler.go(); fs.writeFileSync(process.argv[2], Buffer.from(compiler.rom));" "{{.MURDER_SOURCE}}" "{{.MURDER_ROM}}"'
+
+  download-murder-rom:
+    desc: Download and compile Octo's Murder XO-CHIP two-bitplane demo in Docker
+    deps: [compile-murder-xochip-docker]
+
+  play-murder-docker:
+    desc: Compile Murder in Docker, then launch it with XO-CHIP colour planes and native audio
+    deps: [compile-murder-xochip-docker]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.MURDER_ROM}}
 
-  download-safecracker-rom:
-    desc: Download and verify the Safecracker XO-CHIP colour-and-sound ROM
+  play-murder:
+    desc: Alias for play-murder-docker
+    deps: [play-murder-docker]
+
+  debug-murder-docker:
+    desc: Compile Murder in Docker, then launch it in XO-CHIP debug mode
+    deps: [compile-murder-xochip-docker]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.MURDER_ROM}}
+
+  debug-murder:
+    desc: Alias for debug-murder-docker
+    deps: [debug-murder-docker]
+
+  download-safecracker-source:
+    desc: Download and verify the Safecracker XO-CHIP colour-and-sound Octo source
     cmds:
       - mkdir -p {{.ROM_DIR}}
-      - curl --fail --location --retry 3 --output {{.SAFECRACKER_ROM}} {{.SAFECRACKER_URL}}
-      - 'printf "%s  %s\\n" "{{.SAFECRACKER_SHA256}}" "{{.SAFECRACKER_ROM}}" | shasum -a 256 --check'
+      - curl --fail --location --retry 3 --output {{.SAFECRACKER_SOURCE}} {{.SAFECRACKER_SOURCE_URL}}
+      - 'printf "%s  %s\\n" "{{.SAFECRACKER_SOURCE_SHA256}}" "{{.SAFECRACKER_SOURCE}}" | shasum -a 256 --check'
+
+  compile-safecracker-xochip-docker:
+    desc: Compile the Safecracker XO-CHIP colour-and-sound game with Octo in Docker
+    deps: [download-safecracker-source]
+    cmds:
+      - >-
+        docker run --rm
+        --volume "{{.ROOT_DIR}}:/workspace"
+        --workdir /workspace
+        node:22-alpine
+        sh -ec 'apk add --no-cache curl; curl --fail --location --retry 3 --output /tmp/compiler.js https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/js/compiler.js; node -e "const fs = require(\"fs\"); const { Compiler } = require(\"/tmp/compiler.js\"); const source = fs.readFileSync(process.argv[1], \"utf8\"); const compiler = new Compiler(source); compiler.go(); fs.writeFileSync(process.argv[2], Buffer.from(compiler.rom));" "{{.SAFECRACKER_SOURCE}}" "{{.SAFECRACKER_ROM}}"'
+
+  download-safecracker-rom:
+    desc: Download and compile the Safecracker XO-CHIP colour-and-sound game in Docker
+    deps: [compile-safecracker-xochip-docker]
 
   play-safecracker:
-    desc: Launch Safecracker with XO-CHIP colour planes and native sound
-    deps: [download-safecracker-rom]
+    desc: Compile Safecracker in Docker, then launch it with XO-CHIP colour planes and native sound
+    deps: [compile-safecracker-xochip-docker]
     cmds:
       - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.SAFECRACKER_ROM}}
+
+  debug-safecracker:
+    desc: Compile Safecracker in Docker, then launch it in XO-CHIP debug mode
+    deps: [compile-safecracker-xochip-docker]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.SAFECRACKER_ROM}}
+
+  download-alien-inv8sion-source:
+    desc: Download and verify the Alien Inv8sion XO-CHIP Octo-compatible source
+    cmds:
+      - mkdir -p {{.ROM_DIR}}
+      - curl --fail --location --retry 3 --output {{.ALIEN_INV8SION_SOURCE}} {{.ALIEN_INV8SION_SOURCE_URL}}
+      - 'printf "%s  %s\\n" "{{.ALIEN_INV8SION_SOURCE_SHA256}}" "{{.ALIEN_INV8SION_SOURCE}}" | shasum -a 256 --check'
+
+  compile-alien-inv8sion-docker:
+    desc: Compile the Alien Inv8sion XO-CHIP shooter with Octo in Docker
+    deps: [download-alien-inv8sion-source]
+    cmds:
+      - >-
+        docker run --rm
+        --volume "{{.ROOT_DIR}}:/workspace"
+        --workdir /workspace
+        node:22-alpine
+        sh -ec 'apk add --no-cache curl; curl --fail --location --retry 3 --output /tmp/compiler.js https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/js/compiler.js; node -e "const fs = require(\"fs\"); const { Compiler } = require(\"/tmp/compiler.js\"); const source = fs.readFileSync(process.argv[1], \"utf8\"); const compiler = new Compiler(source); compiler.go(); fs.writeFileSync(process.argv[2], Buffer.from(compiler.rom));" "{{.ALIEN_INV8SION_SOURCE}}" "{{.ALIEN_INV8SION_ROM}}"'
+
+  play-alien-inv8sion:
+    desc: Compile Alien Inv8sion in Docker, then launch it with the XO-CHIP profile
+    deps: [compile-alien-inv8sion-docker]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --profile xochip {{.ROOT_DIR}}/{{.ALIEN_INV8SION_ROM}}
+
+  debug-alien-inv8sion:
+    desc: Compile Alien Inv8sion in Docker, then launch it in XO-CHIP debug mode
+    deps: [compile-alien-inv8sion-docker]
+    cmds:
+      - cargo run --manifest-path src/chip8-native-gui/Cargo.toml -- --debug-mode --profile xochip {{.ROOT_DIR}}/{{.ALIEN_INV8SION_ROM}}

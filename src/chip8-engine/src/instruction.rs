@@ -136,7 +136,8 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
             let collision = if chip.config.profile.supports_xochip() {
                 let mut offset = 0;
                 let mut collision = false;
-                for (bit, plane) in [(1, 1), (2, 2)] {
+                for plane in 0..4 {
+                    let bit = 1 << plane;
                     if chip.plane_mask & bit != 0 {
                         let data = &sprite[offset..offset + sprite_len];
                         offset += sprite_len;
@@ -146,7 +147,7 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
                                 chip.v[y],
                                 data,
                                 chip.config.profile.draw_wraps(),
-                                plane,
+                                bit,
                             )
                         } else {
                             chip.display.draw(
@@ -154,7 +155,7 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
                                 chip.v[y],
                                 data,
                                 chip.config.profile.draw_wraps(),
-                                plane,
+                                bit,
                             )
                         };
                     }
@@ -221,7 +222,7 @@ pub(crate) fn step(chip: &mut Chip8) -> Result<CycleResult, Chip8Error> {
             0x15 => chip.delay_timer = chip.v[x],
             0x18 => chip.sound_timer = chip.v[x],
             0x1E => chip.i = chip.i.wrapping_add(u16::from(chip.v[x])),
-            0x01 if chip.config.profile.supports_xochip() => chip.plane_mask = chip.v[x] & 3,
+            0x01 if chip.config.profile.supports_xochip() => chip.plane_mask = x as u8,
             0x02 if chip.config.profile.supports_xochip() => {
                 ensure_memory_range(chip.i, 16)?;
                 for offset in 0..16 {
@@ -628,12 +629,8 @@ mod tests {
         assert_eq!(&c.memory[0x300..0x302], &[0x22, 0x11]);
         run(&mut c, 3);
         assert_eq!((c.v[0], c.v[1]), (0x11, 0x22));
-        c.memory[0x300] = 0x80;
-        c.memory[0x301] = 0x80;
-        c.load_rom(&[
-            0xA3, 0x00, 0x60, 3, 0xF0, 0x01, 0x61, 0, 0x62, 0, 0xD1, 0x21,
-        ])
-        .expect("valid ROM");
+        c.load_rom(&[0xA3, 0x00, 0xF3, 0x01, 0x61, 0, 0x62, 0, 0xD1, 0x21])
+            .expect("valid ROM");
         c.memory[0x300] = 0x80;
         c.memory[0x301] = 0x80;
         run(&mut c, 6);
@@ -653,5 +650,21 @@ mod tests {
         run(&mut c, 4);
         assert_eq!(c.audio_pattern(), &[0xFF; 16]);
         assert_eq!(c.audio_pitch(), 80);
+    }
+
+    #[test]
+    fn xochip_draws_to_four_bitplanes_when_selected() {
+        let mut c = xochip(&[
+            0xFF, 0x01, // select all four bitplanes
+            0xA3, 0x00, // I = sprite data
+            0x60, 0x00, // V0 = x
+            0x61, 0x00, // V1 = y
+            0xD0, 0x11, // draw one-byte sprite on each selected plane
+        ]);
+        c.memory[0x300..0x304].fill(0x80);
+        for _ in 0..5 {
+            c.step().unwrap();
+        }
+        assert_eq!(c.framebuffer()[0], 0x0F);
     }
 }

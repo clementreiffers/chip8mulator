@@ -4,6 +4,7 @@ pub const DISPLAY_PIXELS: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
 pub const SUPERCHIP_DISPLAY_WIDTH: usize = 128;
 pub const SUPERCHIP_DISPLAY_HEIGHT: usize = 64;
 pub const MAX_DISPLAY_PIXELS: usize = SUPERCHIP_DISPLAY_WIDTH * SUPERCHIP_DISPLAY_HEIGHT;
+const BITPLANES: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DisplayMode {
@@ -23,8 +24,7 @@ impl DisplayMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Framebuffer {
     pixels: [u8; MAX_DISPLAY_PIXELS],
-    plane_one: [u8; MAX_DISPLAY_PIXELS],
-    plane_two: [u8; MAX_DISPLAY_PIXELS],
+    planes: [[u8; MAX_DISPLAY_PIXELS]; BITPLANES],
     mode: DisplayMode,
 }
 
@@ -32,8 +32,7 @@ impl Default for Framebuffer {
     fn default() -> Self {
         Self {
             pixels: [0; MAX_DISPLAY_PIXELS],
-            plane_one: [0; MAX_DISPLAY_PIXELS],
-            plane_two: [0; MAX_DISPLAY_PIXELS],
+            planes: [[0; MAX_DISPLAY_PIXELS]; BITPLANES],
             mode: DisplayMode::LowResolution,
         }
     }
@@ -42,16 +41,14 @@ impl Default for Framebuffer {
 impl Framebuffer {
     pub(crate) fn clear(&mut self) {
         self.pixels.fill(0);
-        self.plane_one.fill(0);
-        self.plane_two.fill(0);
+        self.planes.iter_mut().for_each(|plane| plane.fill(0));
     }
 
     pub(crate) fn clear_planes(&mut self, planes: u8) {
-        if planes & 1 != 0 {
-            self.plane_one.fill(0);
-        }
-        if planes & 2 != 0 {
-            self.plane_two.fill(0);
+        for (index, plane) in self.planes.iter_mut().enumerate() {
+            if planes & (1 << index) != 0 {
+                plane.fill(0);
+            }
         }
         self.refresh();
     }
@@ -183,32 +180,30 @@ impl Framebuffer {
 
     fn toggle(&mut self, index: usize, planes: u8) -> bool {
         let mut collision = false;
-        if planes & 1 != 0 {
-            collision |= self.plane_one[index] != 0;
-            self.plane_one[index] ^= 1;
-        }
-        if planes & 2 != 0 {
-            collision |= self.plane_two[index] != 0;
-            self.plane_two[index] ^= 1;
+        for (plane_index, plane) in self.planes.iter_mut().enumerate() {
+            if planes & (1 << plane_index) != 0 {
+                collision |= plane[index] != 0;
+                plane[index] ^= 1;
+            }
         }
         collision
     }
-    fn selected_planes_mut(&mut self, planes: u8) -> Vec<&mut [u8; MAX_DISPLAY_PIXELS]> {
-        match planes & 3 {
-            1 => vec![&mut self.plane_one],
-            2 => vec![&mut self.plane_two],
-            3 => vec![&mut self.plane_one, &mut self.plane_two],
-            _ => vec![],
-        }
+    fn selected_planes_mut(
+        &mut self,
+        planes: u8,
+    ) -> impl Iterator<Item = &mut [u8; MAX_DISPLAY_PIXELS]> {
+        self.planes
+            .iter_mut()
+            .enumerate()
+            .filter_map(move |(index, plane)| (planes & (1 << index) != 0).then_some(plane))
     }
     fn refresh(&mut self) {
-        for ((output, one), two) in self
-            .pixels
-            .iter_mut()
-            .zip(&self.plane_one)
-            .zip(&self.plane_two)
-        {
-            *output = *one | (*two << 1);
+        for (index, output) in self.pixels.iter_mut().enumerate() {
+            *output = self
+                .planes
+                .iter()
+                .enumerate()
+                .fold(0, |color, (plane, pixels)| color | (pixels[index] << plane));
         }
     }
 }
@@ -246,5 +241,12 @@ mod tests {
         assert_eq!(display.pixels()[2 * 128 + 4], 1);
         display.scroll_left(4, 1);
         assert_eq!(display.pixels()[2 * 128], 1);
+    }
+
+    #[test]
+    fn combines_four_selected_bitplanes_into_a_sixteen_colour_pixel() {
+        let mut display = Framebuffer::default();
+        display.draw(0, 0, &[0x80], false, 0b1111);
+        assert_eq!(display.pixels()[0], 0b1111);
     }
 }

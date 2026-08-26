@@ -222,17 +222,27 @@ fn show_interface(
 }
 
 fn frame_image(framebuffer: &[u8], dimensions: (usize, usize)) -> egui::ColorImage {
-    let mut image = egui::ColorImage::new(
-        [dimensions.0, dimensions.1],
-        egui::Color32::from_rgb(2, 4, 6),
-    );
+    const PALETTE: [egui::Color32; 16] = [
+        egui::Color32::from_rgb(2, 4, 12),
+        egui::Color32::from_rgb(51, 255, 186),
+        egui::Color32::from_rgb(255, 64, 190),
+        egui::Color32::WHITE,
+        egui::Color32::from_rgb(49, 128, 255),
+        egui::Color32::from_rgb(255, 190, 66),
+        egui::Color32::from_rgb(183, 102, 255),
+        egui::Color32::from_rgb(90, 235, 255),
+        egui::Color32::from_rgb(255, 94, 94),
+        egui::Color32::from_rgb(110, 255, 112),
+        egui::Color32::from_rgb(255, 142, 58),
+        egui::Color32::from_rgb(255, 115, 225),
+        egui::Color32::from_rgb(108, 170, 255),
+        egui::Color32::from_rgb(255, 230, 92),
+        egui::Color32::from_rgb(154, 255, 225),
+        egui::Color32::from_rgb(230, 236, 255),
+    ];
+    let mut image = egui::ColorImage::new([dimensions.0, dimensions.1], PALETTE[0]);
     for (output, input) in image.pixels.iter_mut().zip(framebuffer) {
-        *output = match input {
-            0 => egui::Color32::from_rgb(2, 4, 12),
-            1 => egui::Color32::from_rgb(51, 255, 186),
-            2 => egui::Color32::from_rgb(255, 64, 190),
-            _ => egui::Color32::WHITE,
-        };
+        *output = PALETTE[usize::from(*input)];
     }
     image
 }
