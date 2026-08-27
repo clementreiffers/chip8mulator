@@ -1,6 +1,6 @@
 [package]
 name = "chip8-engine"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "A deterministic, platform-independent CHIP-8 emulator"
 license = "MIT"
