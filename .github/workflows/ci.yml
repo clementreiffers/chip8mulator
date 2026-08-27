@@ -22,6 +22,18 @@ jobs:
       - run: cargo clippy --manifest-path src/chip8-engine/Cargo.toml --all-targets --all-features -- -D warnings
       - run: cargo build --manifest-path src/chip8-engine/Cargo.toml --target wasm32-unknown-unknown --features wasm --release
 
+  release-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm test
+
   native-gui:
     name: native-gui (${{ matrix.name }})
     strategy:
@@ -70,3 +82,194 @@ jobs:
         working-directory: src/chip8-web
       - name: Ensure the production site does not embed WASM
         run: test ! -e src/chip8-web/dist/assets/chip8_engine_bg.wasm
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [engine, native-gui, release-tools, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.semantic.outputs.published }}
+      version: ${{ steps.semantic.outputs.version }}
+      tag: ${{ steps.semantic.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - id: semantic
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/run-semantic-release.mjs
+
+  package-engine:
+    if: needs.release.outputs.published == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo package --manifest-path src/chip8-engine/Cargo.toml --allow-dirty --no-verify
+      - run: |
+          mkdir release
+          cp src/chip8-engine/target/package/*.crate release/chip8-engine-${{ needs.release.outputs.version }}.crate
+          cp release/chip8-engine-${{ needs.release.outputs.version }}.crate release/chip8-engine.crate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-release
+          path: release
+
+  package-wasm:
+    if: needs.release.outputs.published == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: sudo apt-get update && sudo apt-get install --yes binaryen
+      - run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - run: cargo build --manifest-path src/chip8-engine/Cargo.toml --target wasm32-unknown-unknown --features wasm --release
+      - run: wasm-bindgen src/chip8-engine/target/wasm32-unknown-unknown/release/chip8_engine.wasm --target web --out-dir release
+      - run: wasm-opt -Oz release/chip8_engine_bg.wasm -o release/chip8_engine_bg.wasm
+      - run: |
+          cd release
+          zip chip8-engine-wasm-${{ needs.release.outputs.version }}.zip chip8_engine.js chip8_engine_bg.wasm chip8_engine.d.ts
+          cp chip8-engine-wasm-${{ needs.release.outputs.version }}.zip chip8-engine-wasm.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-release
+          path: release
+
+  package-native-gui:
+    if: needs.release.outputs.published == 'true'
+    needs: release
+    name: package-native-gui (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: chip8-native-gui
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: chip8-native-gui.exe
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            binary: chip8-native-gui
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux audio build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libasound2-dev libudev-dev pkg-config
+      - run: cargo build --manifest-path src/chip8-native-gui/Cargo.toml --target ${{ matrix.target }} --release
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir release
+          archive="chip8-native-gui-${{ needs.release.outputs.version }}-${{ matrix.name }}.tar.gz"
+          tar -czf "release/$archive" -C src/chip8-native-gui/target/${{ matrix.target }}/release ${{ matrix.binary }}
+          cp "release/$archive" "release/chip8-native-gui-${{ matrix.name }}.tar.gz"
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory release
+          $archive = "chip8-native-gui-${{ needs.release.outputs.version }}-${{ matrix.name }}.zip"
+          Compress-Archive -Path src/chip8-native-gui/target/${{ matrix.target }}/release/${{ matrix.binary }} -DestinationPath "release/$archive"
+          Copy-Item "release/$archive" "release/chip8-native-gui-${{ matrix.name }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.name }}-release
+          path: release
+
+  package-web:
+    if: needs.release.outputs.published == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/chip8-web/package-lock.json
+      - run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - run: npm ci && npm run build
+        working-directory: src/chip8-web
+      - run: mkdir release && tar -czf release/chip8-web-${{ needs.release.outputs.version }}.tar.gz -C src/chip8-web/dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-release
+          path: release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pages-dist
+          path: src/chip8-web/dist
+
+  publish-release:
+    if: needs.release.outputs.published == 'true'
+    needs: [release, package-engine, package-wasm, package-native-gui, package-web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-release"
+          path: release
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          gh release upload "$TAG" release/* --clobber
+          gh release edit "$TAG" --draft=false
+
+  deploy-pages:
+    if: needs.release.outputs.published == 'true'
+    needs: [release, publish-release, package-web]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pages-dist
+          path: dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

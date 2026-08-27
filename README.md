@@ -50,7 +50,10 @@ Les ressources suivantes ont particulièrement guidé le travail :
 
 ## Releases
 
-Une release est créée par un tag Git `vX.Y.Z`. La CI vérifie que cette version
-est identique dans les manifests Rust et web, construit les exécutables pour
-Linux, Windows et macOS, publie le crate et les bindings WASM, puis déploie le
-site sur GitHub Pages.
+Après chaque push sur `main`, semantic-release analyse les [Conventional
+Commits](https://www.conventionalcommits.org/). Lorsqu'un commit mérite une
+publication, il calcule la version, synchronise les manifests Rust et web,
+crée le tag Git `vX.Y.Z`, puis publie les exécutables pour Linux, Windows et
+macOS, le crate, les bindings WASM et le site GitHub Pages. Les commits
+`feat` créent une version mineure, les `fix` une version corrective et les
+changements incompatibles une version majeure.
