@@ -47,12 +47,6 @@ export async function loadWasm(): Promise<LoadedWasm> {
   const local = import.meta.env.DEV;
   const moduleUrl = wasmModuleUrl(local);
   const binaryUrl = wasmBinaryUrl(local);
-  if (local) {
-    return {
-      bindings: await import(/* @vite-ignore */ moduleUrl) as WasmBindings,
-      binaryUrl,
-    };
-  }
   const response = await fetch(moduleUrl);
   if (!response.ok) throw new Error(`WASM bindings download failed: ${response.status}`);
   const source = await response.text();

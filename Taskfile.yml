@@ -285,7 +285,8 @@ tasks:
     desc: Build the WebAssembly engine and serve the React site locally
     dir: src/chip8-web
     cmds:
-      - npm run dev
+      - npm run build:wasm
+      - npm exec vite
 
   build-web:
     desc: Build the static React/WebAssembly site in src/chip8-web/dist
